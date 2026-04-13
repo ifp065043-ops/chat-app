@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Random Chat - Home</title>
+    
+    <!-- ✅ CSP (Content Security Policy) لمنع تنفيذ السكريبتات الضارة -->
+    <meta http-equiv="Content-Security-Policy" content="
+        default-src 'self';
+        script-src 'self' https://cdn.jsdelivr.net;
+        style-src 'self';
+        style-src-attr 'unsafe-inline';
+        img-src 'self' data: blob: https:;
+        media-src 'self' data: https:;
+        connect-src 'self' ws: wss: https:;
+        font-src 'self' data:;
+        frame-src 'none';
+        object-src 'none';
+        base-uri 'self';
+        form-action 'self';
+    ">
+    
+    <link rel="stylesheet" href="style.css">
+    
+    <!-- ✅ DOMPurify - لتنظيف المدخلات ومنع XSS -->
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
+</head>
+<body>
+<div class="topbar">
+    <div class="left">
+        <button id="themeToggle" class="ctrl-btn">🌙</button>
+    </div>
+    <div class="right">
+        <select id="langSelect" class="ctrl-btn">
+            <option value="en">English</option>
+            <option value="ar">العربية</option>
+        </select>
+    </div>
+</div>
+
+<div class="container">
+    <h1 id="t-title">Random Chat</h1>
+    <p id="t-subtitle" class="subtitle">Talk to strangers instantly. Private & Anonymous.</p>
+    
+    <div class="buttons">
+        <button type="button" id="googleBtn" class="btn-glass google">
+            🔵 <span id="t-google">Login with Google</span>
+        </button>
+        <button id="guestBtn" class="btn-glass guest">
+            👤 <span id="t-guest">Continue as Guest</span>
+        </button>
+        <button id="registerBtn" class="btn-glass btn-accent">
+            ✨ <span id="t-register">Create Account</span>
+        </button>
+        <button id="memberBtn" class="btn-glass member">
+            🪪 <span id="t-member">Login</span>
+        </button>
+    </div>
+
+    <div id="nickModal" class="modal is-hidden">
+        <div class="modal-content">
+            <span class="close-modal" id="closeModal" role="button" tabindex="0">&times;</span>
+            <h3 id="t-nickLabel">Enter Nickname</h3>
+            <div class="input-wrapper">
+                <input type="text" id="nicknameInput" placeholder="..." spellcheck="false" maxlength="20">
+            </div>
+            <!-- ✅ مكان عرض رسائل الخطأ -->
+            <div id="nickErrorMsg" class="form-error is-hidden"></div>
+            <button id="confirmNick" class="btn-glass guest">Start</button>
+        </div>
+    </div>
+
+    <div id="memberModal" class="modal is-hidden">
+        <div class="modal-content">
+            <span class="close-modal" id="closeMemberModal" role="button" tabindex="0">&times;</span>
+            <h3 id="t-memberLoginTitle">Member Login</h3>
+            <div class="input-wrapper">
+                <input type="text" id="memberUsernameInput" placeholder="Username" spellcheck="false" maxlength="30">
+            </div>
+            <div class="input-wrapper">
+                <input type="password" id="memberPasswordInput" placeholder="Password" maxlength="50">
+            </div>
+            <div id="memberErrorMsg" class="form-error is-hidden"></div>
+            <button id="confirmMemberLogin" class="btn-glass member">Login</button>
+        </div>
+    </div>
+</div>
+
+    <!-- نموذج التسجيل -->
+    <div id="registerModal" class="modal is-hidden">
+        <div class="modal-content">
+            <span class="close-modal" id="closeRegModal" role="button" tabindex="0">&times;</span>
+            <h3 id="t-registerTitle">✨ Create Account</h3>
+            <div class="input-wrapper">
+                <input type="text" id="regUsernameInput" placeholder="اسم المستخدم (3 أحرف+)" spellcheck="false" maxlength="20">
+            </div>
+            <div class="input-wrapper">
+                <input type="email" id="regEmailInput" placeholder="البريد الإلكتروني" spellcheck="false" maxlength="254">
+            </div>
+            <div class="input-wrapper">
+                <input type="password" id="regPasswordInput" placeholder="كلمة المرور (6 أحرف+)" maxlength="50">
+            </div>
+            <div class="input-wrapper">
+                <select id="regGenderInput" class="ctrl-btn select-full">
+                    <option value="male">ذكر ♂</option>
+                    <option value="female">أنثى ♀</option>
+                </select>
+            </div>
+            <div id="regErrorMsg" class="form-error form-error--tight is-hidden"></div>
+            <button id="confirmRegister" class="btn-glass guest">إنشاء حساب</button>
+        </div>
+    </div>
+
+<script src="/config.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script src="script.js"></script>
+</body>
+</html>

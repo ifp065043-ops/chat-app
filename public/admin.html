@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>لوحة المشرف</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        body { align-items: flex-start; min-height: 100vh; overflow-y: auto; padding: 30px 12px; }
+        .admin-wrap { width: min(1200px, 96vw); margin: 0 auto; }
+        .admin-card { border-radius: 20px; padding: 18px; background: rgba(12, 20, 32, 0.68); border: 1px solid rgba(255,255,255,0.2); backdrop-filter: blur(14px); }
+        .admin-head { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 14px; }
+        .admin-title { margin: 0; font-size: 24px; color: #dff7ff; }
+        .admin-search { width: min(360px, 100%); }
+        .admin-search input { width: 100%; box-sizing: border-box; border-radius: 14px; border: 1px solid rgba(255,255,255,0.22); background: rgba(255,255,255,0.08); color: #fff; padding: 12px 14px; outline: none; }
+        .admin-table-wrap { overflow-x: auto; border-radius: 16px; }
+        .admin-table { width: 100%; border-collapse: collapse; min-width: 960px; }
+        .admin-table th, .admin-table td { text-align: right; padding: 12px 10px; border-bottom: 1px solid rgba(255,255,255,0.12); vertical-align: top; }
+        .admin-table th { color: #a7ecff; font-size: 13px; font-weight: 800; }
+        .admin-table td { color: #f4fbff; font-size: 13px; }
+        .status-chip { display: inline-flex; border-radius: 999px; padding: 4px 10px; font-size: 11px; font-weight: 700; border: 1px solid transparent; }
+        .s-pending { background: rgba(0,210,255,0.14); border-color: rgba(0,210,255,0.45); color: #9aefff; }
+        .s-warned { background: rgba(255,193,7,0.16); border-color: rgba(255,193,7,0.45); color: #ffe7a3; }
+        .s-banned { background: rgba(255,77,77,0.16); border-color: rgba(255,77,77,0.45); color: #ffc9c9; }
+        .s-ignored { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.2); color: #d4dfe5; }
+        .admin-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+        .admin-btn { border: 1px solid rgba(255,255,255,0.2); border-radius: 10px; background: rgba(255,255,255,0.07); color: #fff; cursor: pointer; padding: 6px 10px; font-size: 12px; }
+        .admin-btn--warn { border-color: rgba(255,193,7,0.45); color: #ffe7a3; }
+        .admin-btn--ban { border-color: rgba(255,77,77,0.52); color: #ffc6c6; }
+        .admin-btn--ignore { border-color: rgba(255,255,255,0.28); }
+        .admin-empty { text-align: center; padding: 24px; color: #c3d8e2; }
+        .gate-overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(2, 6, 14, 0.76); backdrop-filter: blur(8px); z-index: 20; }
+        .gate-card { width: min(420px, 92vw); border-radius: 20px; padding: 24px; background: rgba(12, 20, 32, 0.78); border: 1px solid rgba(255,255,255,0.2); text-align: center; }
+        .gate-card input { width: 100%; box-sizing: border-box; margin: 12px 0; border-radius: 14px; border: 1px solid rgba(255,255,255,0.25); background: rgba(255,255,255,0.08); color: #fff; padding: 12px 14px; text-align: center; outline: none; }
+        .gate-error { color: #ff9e9e; min-height: 20px; font-size: 13px; }
+        @media (max-width: 720px) {
+            .admin-title { font-size: 20px; }
+            .admin-table { min-width: 820px; }
+        }
+    </style>
+</head>
+<body class="rooms-page ar">
+    <div id="gateOverlay" class="gate-overlay">
+        <div class="gate-card">
+            <h2 style="margin-top:0;">🔒 لوحة المشرف</h2>
+            <p style="opacity:.8;margin:0 0 8px;">أدخل كلمة مرور المشرف للوصول</p>
+            <input id="gatePassword" type="password" placeholder="كلمة السر">
+            <button id="gateEnterBtn" class="btn-glass report-send-btn" style="width:100%;justify-content:center;">دخول</button>
+            <div id="gateError" class="gate-error"></div>
+        </div>
+    </div>
+
+    <div class="admin-wrap">
+        <div class="admin-card">
+            <div class="admin-head">
+                <h1 class="admin-title">لوحة إدارة البلاغات</h1>
+                <div class="admin-search">
+                    <input id="adminSearchInput" type="search" placeholder="ابحث باسم المبلغ أو المبلَّغ عنه أو السبب...">
+                </div>
+            </div>
+            <div class="admin-table-wrap">
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>المبلّغ</th>
+                            <th>المبلّغ عنه</th>
+                            <th>السبب</th>
+                            <th>التاريخ</th>
+                            <th>الحالة</th>
+                            <th>الإجراءات</th>
+                        </tr>
+                    </thead>
+                    <tbody id="adminReportsBody"></tbody>
+                </table>
+                <div id="adminEmpty" class="admin-empty is-hidden">لا توجد تقارير حالياً</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const ADMIN_SECRET = localStorage.getItem('adminPanelPass') || 'barry@1990';
+        const REPORTS_KEY = 'moderationReports';
+        const STATUS = {
+            pending_review: { ar: 'قيد المراجعة', cls: 's-pending' },
+            warned: { ar: 'تم التحذير', cls: 's-warned' },
+            banned: { ar: 'تم الحظر', cls: 's-banned' },
+            ignored: { ar: 'تم التجاهل', cls: 's-ignored' }
+        };
+
+        function safe(v) {
+            const div = document.createElement('div');
+            div.textContent = String(v || '');
+            return div.textContent;
+        }
+
+        function readReports() {
+            try {
+                const raw = localStorage.getItem(REPORTS_KEY) || '[]';
+                const arr = JSON.parse(raw);
+                return Array.isArray(arr) ? arr : [];
+            } catch {
+                return [];
+            }
+        }
+
+        function writeReports(rows) {
+            localStorage.setItem(REPORTS_KEY, JSON.stringify(rows));
+        }
+
+        function setStatusAt(index, status) {
+            const rows = readReports();
+            if (!rows[index]) return;
+            rows[index].status = status;
+            rows[index].updatedAt = new Date().toISOString();
+            writeReports(rows);
+            renderReports();
+        }
+
+        function statusChip(status) {
+            const row = STATUS[status] || STATUS.pending_review;
+            return `<span class="status-chip ${row.cls}">${safe(row.ar)}</span>`;
+        }
+
+        function fmtDate(iso) {
+            if (!iso) return '-';
+            const d = new Date(iso);
+            if (Number.isNaN(d.getTime())) return '-';
+            return d.toLocaleString('ar');
+        }
+
+        function reasonLabel(v) {
+            const map = {
+                harassment: 'تحرش',
+                abusive_language: 'لفظ سيء',
+                explicit_image: 'صورة خادشة',
+                spam: 'إزعاج',
+                other: 'سبب آخر'
+            };
+            return map[v] || safe(v || '—');
+        }
+
+        function renderReports() {
+            const body = document.getElementById('adminReportsBody');
+            const empty = document.getElementById('adminEmpty');
+            const q = String(document.getElementById('adminSearchInput').value || '').trim().toLowerCase();
+            const rows = readReports();
+            const filtered = rows.filter((r) => {
+                const hay = [
+                    r.reporter, r.reportedUser, r.reason, r.details, r.status
+                ].join(' ').toLowerCase();
+                return !q || hay.includes(q);
+            });
+
+            body.innerHTML = '';
+            if (!filtered.length) {
+                empty.classList.remove('is-hidden');
+                return;
+            }
+            empty.classList.add('is-hidden');
+
+            filtered.forEach((r) => {
+                const originalIndex = rows.indexOf(r);
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${safe(r.reporter || '-')}</td>
+                    <td>${safe(r.reportedUser || '-')}</td>
+                    <td><strong>${safe(reasonLabel(r.reason))}</strong><div style="opacity:.75;margin-top:4px;">${safe(r.details || '')}</div></td>
+                    <td>${safe(fmtDate(r.createdAt))}</td>
+                    <td>${statusChip(r.status || 'pending_review')}</td>
+                    <td>
+                        <div class="admin-actions">
+                            <button class="admin-btn" data-a="view" data-i="${originalIndex}">عرض المحادثة</button>
+                            <button class="admin-btn admin-btn--warn" data-a="warn" data-i="${originalIndex}">تحذير المستخدم</button>
+                            <button class="admin-btn admin-btn--ban" data-a="ban" data-i="${originalIndex}">حظر المستخدم</button>
+                            <button class="admin-btn admin-btn--ignore" data-a="ignore" data-i="${originalIndex}">تجاهل التقرير</button>
+                        </div>
+                    </td>
+                `;
+                body.appendChild(tr);
+            });
+        }
+
+        document.getElementById('adminSearchInput').addEventListener('input', renderReports);
+        document.getElementById('adminReportsBody').addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-a]');
+            if (!btn) return;
+            const i = Number(btn.getAttribute('data-i'));
+            const a = btn.getAttribute('data-a');
+            if (!Number.isFinite(i)) return;
+            if (a === 'view') {
+                alert('عرض المحادثة (UI placeholder) - وصّلها بقاعدة بيانات الرسائل لاحقاً.');
+                return;
+            }
+            if (a === 'warn') setStatusAt(i, 'warned');
+            if (a === 'ban') setStatusAt(i, 'banned');
+            if (a === 'ignore') setStatusAt(i, 'ignored');
+        });
+
+        function tryGate() {
+            const value = String(document.getElementById('gatePassword').value || '');
+            if (value !== ADMIN_SECRET) {
+                document.getElementById('gateError').textContent = 'كلمة المرور غير صحيحة';
+                return;
+            }
+            document.getElementById('gateOverlay').style.display = 'none';
+        }
+
+        document.getElementById('gateEnterBtn').addEventListener('click', tryGate);
+        document.getElementById('gatePassword').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') tryGate();
+        });
+
+        renderReports();
+    </script>
+</body>
+</html>

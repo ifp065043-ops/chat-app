@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en" id="htmlRoot">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rooms - Random Chat</title>
+    
+    <!-- ✅ CSP (Content Security Policy) لمنع تنفيذ السكريبتات الضارة -->
+    <meta http-equiv="Content-Security-Policy" content="
+        default-src 'self';
+        script-src 'self' https://cdn.jsdelivr.net;
+        style-src 'self';
+        style-src-attr 'unsafe-inline';
+        img-src 'self' data: blob: https:;
+        media-src 'self' data: https:;
+        connect-src 'self' ws: wss: https:;
+        worker-src 'self' blob:;
+        font-src 'self' data:;
+        frame-src 'none';
+        object-src 'none';
+        base-uri 'self';
+        form-action 'self';
+    ">
+    
+    <link rel="stylesheet" href="style.css">
+    
+    <!-- ✅ DOMPurify - لتنظيف المدخلات ومنع XSS -->
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
+</head>
+<body class="dark rooms-page"> 
+<div class="topbar dash-topbar">
+    <div class="left">
+        <button id="themeToggle" class="ctrl-btn">🌙</button>
+        <select id="langSelect" class="ctrl-btn">
+            <option value="en">English</option>
+            <option value="ar">العربية</option>
+        </select>
+        <button type="button" id="randomMatchTopBtn" class="random-match-top-btn" aria-label="Random chat">
+            <span class="random-match-top-btn__spectrum" aria-hidden="true"></span>
+            <span class="random-match-top-btn__glass">
+                <span class="random-match-top-btn__shine" aria-hidden="true"></span>
+                <span class="random-match-top-btn__icon" aria-hidden="true"></span>
+            </span>
+        </button>
+    </div>
+    <div class="right">
+        <button type="button" class="user-avatar-mini" id="userAvatarBtn" title="Profile"><img id="userAvatarMini" alt="" /><span id="userAvatarMiniPh">👤</span></button>
+        <div class="messages-popover-anchor" id="messagesPopoverAnchor">
+            <button type="button" class="ctrl-btn icon-btn" id="messagesBtn" title="Messages" aria-expanded="false" aria-haspopup="true" aria-controls="messagesPopover">💌 <span class="badge pulse-badge is-hidden"></span></button>
+            <div id="messagesPopover" class="messages-popover is-hidden" role="dialog" aria-labelledby="t-inboxTitle" aria-modal="false">
+                <div class="messages-popover-caret" aria-hidden="true"></div>
+                <div class="messages-popover-card glass-panel">
+                    <div class="messages-popover-header">
+                        <span id="t-inboxTitle" class="messages-popover-title">Private conversations</span>
+                        <button type="button" class="messages-popover-close" id="closeMessagesPopover" aria-label="Close">&times;</button>
+                    </div>
+                    <div id="inboxList" class="inbox-list messages-popover-list"></div>
+                    <p id="t-inboxEmpty" class="messages-popover-empty">No conversations yet</p>
+                </div>
+            </div>
+        </div>
+        <div class="messages-popover-anchor" id="notificationsPopoverAnchor">
+            <button type="button" class="ctrl-btn icon-btn" id="notificationsBtn" title="Notifications" aria-expanded="false" aria-haspopup="true" aria-controls="notificationsPopover">🔔 <span class="badge pulse-badge is-hidden"></span></button>
+            <div id="notificationsPopover" class="messages-popover is-hidden" role="dialog" aria-labelledby="t-notificationsTitle" aria-modal="false">
+                <div class="messages-popover-caret" aria-hidden="true"></div>
+                <div class="messages-popover-card glass-panel">
+                    <div class="messages-popover-header">
+                        <span class="messages-popover-title messages-popover-title--with-icon">
+                            <span aria-hidden="true">🔔</span>
+                            <span id="t-notificationsTitle">Notifications</span>
+                        </span>
+                        <button type="button" class="messages-popover-close" id="closeNotificationsPopover" aria-label="Close">&times;</button>
+                    </div>
+                    <div id="notificationsList" class="inbox-list messages-popover-list notifications-popover-list"></div>
+                    <p id="t-notificationsEmpty" class="messages-popover-empty">No notifications</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="dropdown">
+            <button class="ctrl-btn" id="settingsBtn">
+                👤 <span id="t-settings">Settings</span>
+            </button>
+            <div class="dropdown-content" id="myDropdown">
+                <a href="#" id="openProfileLink">👤 <span id="t-profile">My Profile</span></a>
+                <a href="rooms.html" id="t-roomsList">🏠 Rooms List</a>
+                <div class="divider"></div>
+                <a href="#" id="logoutAllDevicesBtn"><span id="t-logoutAllDevices">تسجيل الخروج من كل الأجهزة</span></a>
+                <a href="index.html" id="logoutBtn" class="logout-link">
+                    🚪 <span id="t-logout">Logout</span>
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="dashboard-container">
+    <div id="roomSelection">
+        <div class="dash-header">
+            <h2 id="t-chooseRoom">🌍 Choose a Room</h2>
+            <p id="t-welcome">Welcome back, <span id="displayNick" class="highlight-name"></span>!</p>
+        </div>
+        
+        <div class="rooms-grid" id="roomsGrid">
+            <div class="room-card" data-room="Morocco" data-emoji="🇲🇦" data-code="ma"><div class="flag-bg"></div><h3 id="t-morocco">Morocco</h3><div class="online-status"><span class="pulse-dot"></span> <span class="count room-online-label">Online</span></div></div>
+            <div class="room-card" data-room="Saudi Arabia" data-emoji="🇸🇦" data-code="sa"><div class="flag-bg"></div><h3 id="t-saudi">Saudi Arabia</h3><div class="online-status"><span class="pulse-dot"></span> <span class="count room-online-label">Online</span></div></div>
+            <div class="room-card" data-room="Egypt" data-emoji="🇪🇬" data-code="eg"><div class="flag-bg"></div><h3 id="t-egypt">Egypt</h3><div class="online-status"><span class="pulse-dot"></span> <span class="count room-online-label">Online</span></div></div>
+            <div class="room-card" data-room="Palestine" data-emoji="🇵🇸" data-code="ps"><div class="flag-bg"></div><h3 id="t-palestine">Palestine</h3><div class="online-status"><span class="pulse-dot"></span> <span class="count room-online-label">Online</span></div></div>
+            <div class="room-card" data-room="Lebanon" data-emoji="🇱🇧" data-code="lb"><div class="flag-bg"></div><h3 id="t-lebanon">Lebanon</h3><div class="online-status"><span class="pulse-dot"></span> <span class="count room-online-label">Online</span></div></div>
+            <div class="room-card" data-room="Algeria" data-emoji="🇩🇿" data-code="dz"><div class="flag-bg"></div><h3 id="t-algeria">Algeria</h3><div class="online-status"><span class="pulse-dot"></span> <span class="count room-online-label">Online</span></div></div>
+            <div class="room-card" data-room="Tunisia" data-emoji="🇹🇳" data-code="tn"><div class="flag-bg"></div><h3 id="t-tunisia">Tunisia</h3><div class="online-status"><span class="pulse-dot"></span> <span class="count room-online-label">Online</span></div></div>
+            <div class="room-card" data-room="Bahrain" data-emoji="🇧🇭" data-code="bh"><div class="flag-bg"></div><h3 id="t-bahrain">Bahrain</h3><div class="online-status"><span class="pulse-dot"></span> <span class="count room-online-label">Online</span></div></div>
+            <div class="room-card" data-room="Qatar" data-emoji="🇶🇦" data-code="qa"><div class="flag-bg"></div><h3 id="t-qatar">Qatar</h3><div class="online-status"><span class="pulse-dot"></span> <span class="count room-online-label">Online</span></div></div>
+            <div class="room-card" data-room="UAE" data-emoji="🇦🇪" data-code="ae"><div class="flag-bg"></div><h3 id="t-uae">UAE</h3><div class="online-status"><span class="pulse-dot"></span> <span class="count room-online-label">Online</span></div></div>
+            <div class="room-card" data-room="Syria" data-emoji="🇸🇾" data-code="sy"><div class="flag-bg"></div><h3 id="t-syria">Syria</h3><div class="online-status"><span class="pulse-dot"></span> <span class="count room-online-label">Online</span></div></div>
+            <div class="room-card" data-room="Gulf Region" data-emoji="🌐" data-region="GULF"><div class="flag-bg"></div><h3 id="t-gulf">Gulf</h3><div class="online-status"><span class="pulse-dot"></span> <span class="count room-online-label">Online</span></div></div>
+            <div class="room-card" data-room="North Africa" data-emoji="🌐" data-region="NORTH_AFRICA"><div class="flag-bg"></div><h3 id="t-northAfrica">North Africa</h3><div class="online-status"><span class="pulse-dot"></span> <span class="count room-online-label">Online</span></div></div>
+            <div class="room-card" data-room="Levant" data-emoji="🌐" data-region="LEVANT"><div class="flag-bg"></div><h3 id="t-levant">Levant</h3><div class="online-status"><span class="pulse-dot"></span> <span class="count room-online-label">Online</span></div></div>
+            <div class="room-card room-card--girls-only" data-room="Girls Only" data-room-kind="girls" data-emoji="💕"><div class="flag-bg flag-bg--girls-art" aria-hidden="true"></div><h3 id="t-roomGirls">Girls only</h3><div class="online-status"><span class="pulse-dot"></span> <span class="count room-online-label">Online</span></div></div>
+        </div>
+    </div>
+
+    <div id="chatInterface" class="is-hidden">
+        <div class="chat-header glass-panel chat-header--wrap">
+            <button type="button" class="ctrl-btn ctrl-btn--compact" id="leaveRoomBtn">🔙</button>
+            <div class="chat-tabs">
+                <button type="button" class="chat-tab active" id="tabRoomView"><span id="t-tabRoom">Room</span></button>
+            </div>
+            <span id="currentRoomName" class="current-room-name"></span>
+        </div>
+
+        <div id="roomViewWrap" class="chat-room-split">
+            <div class="chat-room-main-col">
+                <div id="paneRoom" class="chat-pane">
+                    <div id="messagesArea" class="messages-area glass-panel chat-messages-stripes"></div>
+                    <div id="typingIndicator" class="typing-info"></div>
+                    <div class="input-area glass-panel input-area--modern">
+                        <input type="file" id="imageInput" accept="image/*" class="is-hidden">
+                        <button type="button" class="media-btn cam-btn" id="camBtn">📷</button>
+                        <button type="button" class="media-btn mic-btn" id="micBtn" title="تسجيل صوتي">
+                          <svg id="micIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <rect x="9" y="2" width="6" height="11" rx="3" fill="currentColor"/>
+                            <path d="M5 10a7 7 0 0 0 14 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                            <line x1="12" y1="17" x2="12" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                            <line x1="9" y1="21" x2="15" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                          </svg>
+                          <span id="micTimer" class="mic-timer is-hidden">0:00</span>
+                        </button>
+                        <button type="button" class="media-btn gif-btn" id="gifBtnRoom" title="GIF" aria-label="GIF">GIF</button>
+                        <button type="button" class="media-btn emoji-btn" id="emojiBtnRoom" title="Emoji" aria-label="Emoji">😊</button>
+                        <input type="text" id="msgInput" data-i18n-placeholder="phMessage" placeholder="..." autocomplete="off" maxlength="500">
+                        <button type="button" id="sendBtn" class="send-btn send-btn--round" aria-label="Send">➤</button>
+                    </div>
+                </div>
+            </div>
+            <aside id="roomUsersSidebar" class="chat-room-sidebar glass-panel" aria-label="Online users">
+                <div class="sidebar-users-search-wrap">
+                    <span class="sidebar-search-icon" aria-hidden="true">🔍</span>
+                    <input type="search" id="sidebarUserSearch" class="sidebar-users-search" data-i18n-placeholder="phSearchUsers" placeholder="Search for people..." autocomplete="off">
+                </div>
+                <div class="sidebar-online-bar">
+                    <span id="t-sidebarOnline">Online</span>
+                    <span id="onlineCount" class="sidebar-online-num">0</span>
+                </div>
+                <div id="sidebarUserList" class="user-list sidebar-users-scroll"></div>
+            </aside>
+        </div>
+
+        <div id="panePrivate" class="chat-pane is-hidden">
+            <div class="pm-layout glass-panel messenger-shell">
+                <div class="pm-threads">
+                    <div class="pm-threads-header messenger-chats-header">
+                        <span id="t-privateChatsTitle">المحادثات</span>
+                    </div>
+                    <div class="pm-search">
+                        <input id="privateThreadSearchInput" class="pm-search-input" type="text" data-i18n-placeholder="phThreadSearch" placeholder="Search..." autocomplete="off">
+                    </div>
+                    <div id="privateThreadsList" class="pm-threads-list"></div>
+                </div>
+                <div class="pm-chat">
+                    <div class="pm-chat-header-stack">
+                        <div class="pm-peer-cover-row" aria-hidden="true">
+                            <img id="privatePeerCoverImg" class="pm-peer-cover-img is-hidden" alt="" />
+                            <div id="privatePeerCoverFallback" class="pm-peer-cover-fallback"></div>
+                        </div>
+                        <div class="pm-chat-topbar">
+                            <span id="privatePeerAvatarBadge" class="pm-peer-badge" aria-hidden="true">
+                                <img id="privatePeerBadgeAvatar" class="pm-peer-badge-img is-hidden" alt="" />
+                                <span id="privatePeerBadgeLetter" class="pm-peer-badge-letter">…</span>
+                            </span>
+                            <div class="pm-chat-topbar-info">
+                                <div id="privatePeerLabel" class="private-peer-label pm-topbar-name"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="privateMessagesArea" class="messages-area pm-messages"></div>
+                    <div class="input-area pm-input">
+                        <input type="file" id="privateImageInput" accept="image/*" class="is-hidden">
+                        <button type="button" class="media-btn" id="privateCamBtn">📷</button>
+                        <button type="button" class="media-btn mic-btn" id="privateMicBtn" title="تسجيل صوتي">
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <rect x="9" y="2" width="6" height="11" rx="3" fill="currentColor"/>
+                            <path d="M5 10a7 7 0 0 0 14 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                            <line x1="12" y1="17" x2="12" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                            <line x1="9" y1="21" x2="15" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                          </svg>
+                          <span id="privateMicTimer" class="mic-timer is-hidden">0:00</span>
+                        </button>
+                        <button type="button" class="media-btn gif-btn" id="gifBtnPrivate" title="GIF" aria-label="GIF">GIF</button>
+                        <button type="button" class="media-btn emoji-btn" id="emojiBtnPrivate" title="Emoji" aria-label="Emoji">😊</button>
+                        <input type="text" id="privateMsgInput" data-i18n-placeholder="phMessage" placeholder="..." autocomplete="off" maxlength="500">
+                        <button type="button" id="privateSendBtn" class="send-btn send-btn--round" aria-label="Send">➤</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- دردشة عشوائية (مطابقة) — واجهة مستوحاة من فضفض / Azar -->
+<div id="randomMatchApp" class="random-match-app is-hidden" aria-hidden="true">
+    <div class="random-match-app__backdrop" id="randomMatchBackdrop"></div>
+    <div id="randomToast" class="random-toast is-hidden" role="status" aria-live="polite"></div>
+    <div class="random-match-app__panel">
+        <div id="randomLobbyView" class="random-lobby">
+            <header class="random-lobby__top">
+                <button type="button" class="random-icon-btn" id="randomCloseLobbyBtn" aria-label="Close">✕</button>
+                <div class="random-lobby__points">
+                    <span class="random-diamond" aria-hidden="true">💎</span>
+                    <span id="randomDiamondCount">0</span>
+                </div>
+                <div id="randomRegionPicker" class="random-region-picker" aria-label="Region">
+                    <button type="button" id="randomRegionPickerBtn" class="random-region-picker__btn" aria-haspopup="listbox" aria-expanded="false">
+                        <img id="randomRegionFlag" class="random-region-picker__flag" src="" alt="" />
+                        <span id="randomRegionLabel">🌐 All</span>
+                    </button>
+                    <div id="randomRegionMenu" class="random-region-picker__menu is-hidden" role="listbox" aria-label="Countries"></div>
+                    <input type="hidden" id="randomRegionSelect" value="all" />
+                </div>
+            </header>
+
+            <p class="random-lobby__earn-wrap">
+                <button type="button" class="random-earn-btn" id="randomEarnPointsBtn">
+                    <span id="t-randomEarnPoints">Earn points</span>
+                </button>
+            </p>
+
+            <div class="random-mode-toggle" role="tablist" aria-label="Chat mode">
+                <button type="button" class="random-mode-toggle__btn" id="randomModeVoice" data-mode="voice" aria-selected="false">
+                    <span aria-hidden="true">📞</span> <span id="t-randomModeVoice">Voice</span>
+                </button>
+                <button type="button" class="random-mode-toggle__btn random-mode-toggle__btn--active" id="randomModeText" data-mode="text" aria-selected="true">
+                    <span aria-hidden="true">💬</span> <span id="t-randomModeText">Text chat</span>
+                </button>
+            </div>
+
+            <h2 class="random-lobby__section-title" id="t-randomChatWith">Chat with</h2>
+            <div class="random-gender-cards">
+                <button type="button" class="random-gender-card" id="randomPickMale" data-want="male">
+                    <span class="random-gender-card__art random-gender-card__art--male" aria-hidden="true"></span>
+                    <span class="random-gender-card__label" id="t-randomMale">Male</span>
+                    <span class="random-gender-card__price"><span class="random-diamond-sm">💎</span> <span id="randomPriceFiltered">15</span></span>
+                </button>
+                <button type="button" class="random-gender-card random-gender-card--featured" id="randomPickAll" data-want="any">
+                    <span class="random-gender-card__art random-gender-card__art--all" aria-hidden="true"></span>
+                    <span class="random-gender-card__label" id="t-randomAll">All</span>
+                    <span class="random-gender-card__free" id="t-randomFree">Free</span>
+                </button>
+                <button type="button" class="random-gender-card" id="randomPickFemale" data-want="female">
+                    <span class="random-gender-card__art random-gender-card__art--female" aria-hidden="true"></span>
+                    <span class="random-gender-card__label" id="t-randomFemale">Female</span>
+                    <span class="random-gender-card__price"><span class="random-diamond-sm">💎</span> <span id="randomPriceFiltered2">15</span></span>
+                </button>
+            </div>
+
+            <div class="random-lobby__footer">
+                <button type="button" class="random-start-btn" id="randomStartBtn">
+                    <span id="t-randomStart">Start</span>
+                </button>
+            </div>
+        </div>
+
+        <div id="randomSearchView" class="random-search-view is-hidden">
+            <div class="random-search-view__inner">
+                <div class="random-search-pulse" aria-hidden="true"></div>
+                <p class="random-search-view__title" id="t-randomSearching">Searching…</p>
+                <button type="button" class="ctrl-btn" id="randomCancelSearchBtn"><span id="t-randomCancelSearch">Cancel</span></button>
+            </div>
+        </div>
+
+        <div id="randomChatView" class="random-chat-view is-hidden">
+            <header class="random-chat-view__header">
+                <button type="button" class="random-icon-btn" id="randomChatBackBtn" aria-label="Back">←</button>
+                <h2 class="random-chat-view__title" id="randomPartnerTitle">…</h2>
+                <button type="button" class="random-skip-btn" id="randomSkipBtn"><span id="t-randomSkip">Skip</span></button>
+            </header>
+            <div id="randomChatMessages" class="random-chat-messages" aria-live="polite"></div>
+            <div class="random-chat-input-row">
+                <button type="button" class="random-chat-plus" aria-hidden="true" disabled>+</button>
+                <input type="text" id="randomChatInput" class="random-chat-input" data-i18n-placeholder="phRandomMsg" placeholder="Message…" maxlength="500" autocomplete="off">
+                <button type="button" class="random-chat-send" id="randomChatSendBtn" aria-label="Send">➤</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="randomPointsModal" class="modal random-points-modal is-hidden">
+    <div class="modal-content glass-panel random-points-modal__card">
+        <span class="close-modal" id="randomPointsModalClose">&times;</span>
+        <h3 class="random-points-modal__title" id="t-randomPointsTitle">Points &amp; packs</h3>
+        <p class="random-points-modal__sub" id="t-randomPointsSub">Choose an option</p>
+        <div class="random-points-actions">
+            <button type="button" class="random-points-row" id="randomOptMonthly">
+                <span class="random-points-row__icon">📅</span>
+                <span class="random-points-row__text" id="t-randomMonthly">Monthly pack</span>
+                <span class="random-points-row__chev">›</span>
+            </button>
+            <button type="button" class="random-points-row" id="randomOptBuy">
+                <span class="random-points-row__icon">💎</span>
+                <span class="random-points-row__text" id="t-randomBuyPoints">Buy points</span>
+                <span class="random-points-row__chev">›</span>
+            </button>
+            <button type="button" class="random-points-row random-points-row--accent" id="randomOptFreeAd">
+                <span class="random-points-row__icon">▶</span>
+                <span class="random-points-row__text" id="t-randomFreePts">Free points (watch ad)</span>
+                <span class="random-points-row__chev">›</span>
+            </button>
+        </div>
+    </div>
+</div>
+
+<div id="randomAdModal" class="modal random-ad-modal is-hidden">
+    <div class="modal-content glass-panel random-ad-modal__card">
+        <h3 class="random-ad-modal__title" id="t-randomAdTitle">Sponsored video</h3>
+        <div class="random-ad-placeholder" id="randomAdPlaceholder">
+            <p id="t-randomAdHint">Watch to earn +5 💎</p>
+            <div class="random-ad-progress"><div class="random-ad-progress__bar" id="randomAdProgressBar"></div></div>
+        </div>
+        <button type="button" class="btn-glass btn-full" id="randomAdCloseBtn" disabled><span id="t-randomAdWait">Please wait…</span></button>
+    </div>
+</div>
+
+<!-- Profile Modal -->
+<div id="profileModal" class="modal is-hidden">
+    <div class="modal-content glass-panel profile-modal-inner profile-modal--scroll">
+        <span class="close-modal" id="closeProfileModal">&times;</span>
+        <div class="profile-hero">
+            <div class="profile-cover-stack">
+                <div class="profile-cover-wrap">
+                    <div class="profile-cover-media">
+                        <img id="coverPreview" class="profile-cover-img is-hidden" alt="" />
+                        <div id="coverPlaceholder" class="profile-cover-placeholder" aria-hidden="true"></div>
+                    </div>
+                    <input type="file" id="coverInput" accept="image/jpeg,image/png,image/webp" class="is-hidden">
+                    <button type="button" class="profile-cover-change-btn ctrl-btn ctrl-btn--sm" id="coverPickBtn"><span id="t-coverChange">Cover photo</span></button>
+                    <p id="t-coverHint" class="profile-cover-hint">JPG, PNG or WebP — max 1.2 MB</p>
+                </div>
+                <div class="profile-avatar-floating">
+                    <div class="avatar-circle-wrap avatar-circle-wrap--hero" id="avatarCircleWrap">
+                        <img id="avatarPreview" class="avatar-preview-img" alt="" />
+                        <span id="avatarPlaceholder" class="avatar-placeholder">👤</span>
+                    </div>
+                    <input type="file" id="avatarInput" accept="image/jpeg,image/png,image/webp,image/gif" class="is-hidden">
+                </div>
+            </div>
+            <div class="profile-under-cover">
+                <div class="profile-under-cover-gutter" aria-hidden="true"></div>
+                <div class="profile-under-cover-main">
+                    <h3 id="t-profileTitle" class="profile-title profile-title--hero">👤 My Profile</h3>
+                    <div class="profile-avatar-actions">
+                        <button type="button" class="ctrl-btn ctrl-btn--sm" id="avatarPickBtn"><span id="t-avatarChange">Change photo</span></button>
+                        <p id="t-avatarHint" class="avatar-hint">JPG, PNG — max 1 MB</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="profile-tabs profile-tabs-row">
+            <button type="button" class="tab-btn active" data-tab="basic" id="t-tabBasic">Basic Info</button>
+            <button type="button" class="tab-btn" data-tab="account" id="t-tabAccount">Account</button>
+            <button type="button" class="tab-btn" data-tab="privacy" id="t-tabPrivacy">Privacy</button>
+            <button type="button" class="tab-btn" data-tab="notifications" id="t-tabNotifications">Notifications</button>
+        </div>
+        
+        <div id="tab-basic" class="profile-tab active">
+            <div class="input-group profile-field">
+                <label class="profile-label" for="userDisplayName"><span id="t-labelUsername">👤 Username</span></label>
+                <input type="text" id="userDisplayName" class="ctrl-btn profile-input" placeholder="Username" maxlength="20">
+            </div>
+            <div class="input-group profile-field">
+                <label class="profile-label" for="userGender"><span id="t-labelGender">⚥ Gender</span></label>
+                <select id="userGender" class="ctrl-btn profile-input"></select>
+            </div>
+            <div class="input-group profile-field">
+                <label class="profile-label" for="userAge"><span id="t-labelAge">🎂 Age</span></label>
+                <input type="number" id="userAge" class="ctrl-btn profile-input" placeholder="20" min="1" max="120">
+            </div>
+            <div class="input-group profile-field">
+                <label class="profile-label" for="userCountry"><span id="t-labelCountry">🌍 Country</span></label>
+                <select id="userCountry" class="ctrl-btn profile-input"></select>
+            </div>
+            <div class="input-group profile-field">
+                <label class="profile-label" for="userRelationship"><span id="t-labelRelationship">💑 Relationship</span></label>
+                <select id="userRelationship" class="ctrl-btn profile-input"></select>
+            </div>
+            <div class="input-group profile-field">
+                <label class="profile-label" for="userBio"><span id="t-labelBio">💬 Bio</span></label>
+                <textarea id="userBio" class="ctrl-btn profile-input profile-textarea" rows="2" maxlength="150"></textarea>
+            </div>
+        </div>
+        
+        <div id="tab-account" class="profile-tab is-hidden">
+            <div class="input-group profile-field">
+                <label class="profile-label" for="userEmail"><span id="t-labelEmail">📧 Email</span></label>
+                <input type="email" id="userEmail" class="ctrl-btn profile-input" placeholder="your@email.com">
+                <small id="t-hintEmail" class="profile-hint">⚠️ Will receive account activation message</small>
+            </div>
+            <div class="input-group profile-field">
+                <label class="profile-label" for="userPassword"><span id="t-labelPassword">🔐 Password</span></label>
+                <input type="password" id="userPassword" class="ctrl-btn profile-input" placeholder="••••••••">
+                <small id="t-hintPassword" class="profile-hint">⚠️ Use a strong password for account security</small>
+            </div>
+            <div class="input-group profile-field">
+                <label class="profile-label" for="userChatLang"><span id="t-labelChatLang">🌐 Chat Language</span></label>
+                <select id="userChatLang" class="ctrl-btn profile-input"></select>
+            </div>
+            <div class="input-group profile-field">
+                <label class="profile-label" for="userTimezone"><span id="t-labelTimezone">🕒 Timezone</span></label>
+                <select id="userTimezone" class="ctrl-btn profile-input">
+                    <option value="UTC">UTC</option>
+                    <option value="America/Los_Angeles">America/Los_Angeles</option>
+                    <option value="America/New_York">America/New_York</option>
+                    <option value="Europe/London">Europe/London</option>
+                    <option value="Europe/Paris">Europe/Paris</option>
+                    <option value="Asia/Dubai">Asia/Dubai</option>
+                    <option value="Asia/Riyadh">Asia/Riyadh</option>
+                    <option value="Africa/Casablanca">Africa/Casablanca</option>
+                    <option value="Africa/Cairo">Africa/Cairo</option>
+                </select>
+            </div>
+        </div>
+        
+        <div id="tab-privacy" class="profile-tab is-hidden">
+            <div class="input-group profile-field">
+                <label class="profile-label" for="privacyImages"><span id="t-labelPrivacyImages">📸 Who can send me private images?</span></label>
+                <select id="privacyImages" class="ctrl-btn profile-input"></select>
+            </div>
+            <div class="input-group profile-field">
+                <label class="profile-label" for="privacyPrivateChat"><span id="t-labelPrivateChat">💬 Private Chat</span></label>
+                <select id="privacyPrivateChat" class="ctrl-btn profile-input"></select>
+            </div>
+            <div class="input-group profile-field">
+                <label class="profile-label" for="privacyOnlineStatus"><span id="t-labelOnlineStatus">👁️ Show my online status</span></label>
+                <select id="privacyOnlineStatus" class="ctrl-btn profile-input"></select>
+            </div>
+        </div>
+        
+        <div id="tab-notifications" class="profile-tab is-hidden">
+            <div class="input-group profile-field">
+                <label class="profile-label" for="notifSounds"><span id="t-labelNotifSound">🔊 Sound Effects</span></label>
+                <select id="notifSounds" class="ctrl-btn profile-input"></select>
+            </div>
+            <div class="input-group profile-field">
+                <label class="profile-label" for="notifJoinLeave"><span id="t-labelNotifJoinLeave">👋 Show join/leave messages</span></label>
+                <select id="notifJoinLeave" class="ctrl-btn profile-input"></select>
+            </div>
+            <div class="input-group profile-field">
+                <label class="profile-label" for="notifTheme"><span id="t-labelNotifTheme">🎨 Theme</span></label>
+                <select id="notifTheme" class="ctrl-btn profile-input"></select>
+            </div>
+        </div>
+        <button type="button" class="ctrl-btn close-modal--static profile-modal-x" id="closeProfileModalAlt" aria-label="Close profile">✕</button>
+        <button type="button" class="btn-glass btn-full" id="saveProfileSettingsBtn">💾 <span id="t-saveProfile">Save All Settings</span></button>
+    </div>
+</div>
+
+<div id="userContextMenu" class="user-context-menu is-hidden">
+    <button type="button" id="ctxPrivateBtn">💬 <span id="t-ctxPrivate">محادثة خاصة</span></button>
+    <button type="button" id="ctxReportBtn">🚩 <span id="t-ctxReport">إبلاغ</span></button>
+    <button type="button" id="ctxBlockBtn">⛔ <span id="t-ctxBlock">حظر</span></button>
+    <button type="button" id="ctxProfileBtn">👤 <span id="t-ctxProfile">عرض الملف الشخصي</span></button>
+</div>
+
+<div id="reportModal" class="modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="t-reportTitle">
+    <div class="modal-content glass-panel report-modal-card">
+        <span class="close-modal" id="closeReportModal" role="button" tabindex="0">&times;</span>
+        <h3 id="t-reportTitle" class="modal-title-top">🚩 إبلاغ عن مستخدم</h3>
+        <p id="reportTargetLabel" class="report-target-label">...</p>
+        <div class="input-group profile-field">
+            <label class="profile-label" for="reportReasonSelect"><span id="t-reportReason">سبب الإبلاغ</span></label>
+            <select id="reportReasonSelect" class="ctrl-btn profile-input report-select">
+                <option value="harassment">تحرش</option>
+                <option value="abusive_language">لفظ سيء</option>
+                <option value="explicit_image">صورة خادشة</option>
+                <option value="spam">إزعاج</option>
+                <option value="other">سبب آخر</option>
+            </select>
+        </div>
+        <div class="input-group profile-field">
+            <label class="profile-label" for="reportDetailsInput"><span id="t-reportDetails">تفاصيل إضافية (اختياري)</span></label>
+            <textarea id="reportDetailsInput" class="ctrl-btn profile-input profile-textarea report-details-area" rows="3" maxlength="400" placeholder="..."></textarea>
+        </div>
+        <div class="report-actions-row">
+            <button type="button" id="cancelReportBtn" class="ctrl-btn report-cancel-btn"><span id="t-cancel">إلغاء</span></button>
+            <button type="button" id="submitReportBtn" class="btn-glass report-send-btn"><span id="t-submitReport">إرسال التبليغ</span></button>
+        </div>
+    </div>
+</div>
+
+<div id="blockConfirmModal" class="modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="t-blockTitle">
+    <div class="modal-content glass-panel block-modal-card">
+        <span class="close-modal" id="closeBlockModal" role="button" tabindex="0">&times;</span>
+        <h3 id="t-blockTitle" class="modal-title-top">⛔ حظر المستخدم</h3>
+        <p id="blockTargetLabel" class="report-target-label">...</p>
+        <p id="t-blockConfirmText" class="block-confirm-text">هل تريد حظر هذا المستخدم؟ لن يتمكن من مراسلتك أو الظهور في بحثك.</p>
+        <div class="report-actions-row">
+            <button type="button" id="cancelBlockBtn" class="ctrl-btn report-cancel-btn"><span id="t-cancel2">إلغاء</span></button>
+            <button type="button" id="confirmBlockBtn" class="btn-glass report-danger-btn"><span id="t-confirmBlock">تأكيد</span></button>
+        </div>
+    </div>
+</div>
+
+<div id="reportToast" class="report-toast is-hidden" role="status" aria-live="polite"></div>
+
+<div id="emojiPopover" class="emoji-popover is-hidden" dir="ltr" role="dialog" aria-label="Emoji picker">
+    <div class="emoji-popover-caret" aria-hidden="true"></div>
+    <div class="emoji-popover-panel glass-panel" id="emojiPopoverPanel">
+        <div class="emoji-popover-tabs" id="emojiPopoverTabsWrap">
+            <div class="emoji-pop-tabs-row emoji-pop-tabs-row--faces" id="emojiPopoverTabFaces" role="tablist" aria-label="Faces"></div>
+            <div class="emoji-pop-tabs-row emoji-pop-tabs-row--hub" id="emojiPopoverTabsHub" role="tablist" aria-label="Categories"></div>
+        </div>
+        <div class="emoji-popover-scroll" id="emojiPopoverScroll"></div>
+    </div>
+</div>
+
+<div id="gifPopover" class="gif-popover is-hidden" dir="ltr" role="dialog" aria-label="GIF stickers">
+    <div class="emoji-popover-caret gif-popover-caret" aria-hidden="true"></div>
+    <div class="gif-popover-panel glass-panel" id="gifPopoverPanel">
+        <div class="gif-popover-scroll" id="gifPopoverScroll"></div>
+    </div>
+</div>
+
+<div id="mediaLightbox" class="media-lightbox is-hidden" role="dialog" aria-modal="true" aria-label="Media preview">
+    <button type="button" class="media-lightbox-backdrop" id="mediaLightboxBackdrop" aria-label="Close"></button>
+    <button type="button" class="media-lightbox-close" id="mediaLightboxClose" aria-label="Close">&times;</button>
+    <div class="media-lightbox-frame">
+        <img id="mediaLightboxImg" class="media-lightbox-img" alt="" />
+    </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="script.js"></script>
+</body>
+</html>

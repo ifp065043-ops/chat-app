@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Verify Email</title>
+  <style>
+    body { font-family: Arial, sans-serif; background:#0b1220; color:#e8e8e8; display:flex; min-height:100vh; margin:0; align-items:center; justify-content:center; }
+    .card { width:min(520px, calc(100vw - 24px)); background: rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:16px; padding:18px 16px; backdrop-filter: blur(14px); }
+    .muted { opacity: 0.75; font-size: 13px; }
+    a { color:#7dd3fc; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2 id="title">Verifying…</h2>
+    <p id="msg" class="muted">Please wait.</p>
+    <p class="muted"><a href="/index.html">Back to home</a></p>
+  </div>
+  <script>
+    (async () => {
+      const params = new URLSearchParams(location.search);
+      const token = params.get('token') || '';
+      const title = document.getElementById('title');
+      const msg = document.getElementById('msg');
+      if (!token) {
+        title.textContent = 'Missing token';
+        msg.textContent = 'The verification link is incomplete.';
+        return;
+      }
+      try {
+        const res = await fetch('/api/auth/verify-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ token })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          title.textContent = 'Verification failed';
+          msg.textContent = data.error || 'Invalid or expired link.';
+          return;
+        }
+        title.textContent = 'Email verified';
+        msg.textContent = 'Your email has been verified successfully.';
+      } catch (e) {
+        title.textContent = 'Network error';
+        msg.textContent = 'Could not reach the server.';
+      }
+    })();
+  </script>
+</body>
+</html>

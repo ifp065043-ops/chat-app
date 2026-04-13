@@ -1,0 +1,37 @@
+{
+  "name": "pro-glass-chat",
+  "version": "2.0.0",
+  "description": "Advanced Real-time Chat with Media & Profile System - Secure Version",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "env:init": "node scripts/init-env.js",
+    "env:init:prod": "node scripts/init-env.js production",
+    "lint": "eslint server.js scripts",
+    "lint:fix": "eslint server.js scripts --fix",
+    "format": "prettier --write \"server.js\" \"scripts/**/*.js\"",
+    "test": "node --check server.js && node --check public/script.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "dompurify": "^3.0.6",
+    "dotenv": "^17.3.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^6.10.0",
+    "helmet": "^7.0.0",
+    "jsdom": "^29.0.2",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^9.3.3",
+    "nodemailer": "^8.0.4",
+    "redis": "^5.11.0",
+    "socket.io": "^4.7.2"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.1",
+    "prettier": "^3.4.2",
+    "socket.io-client": "^4.8.3"
+  }
+}
