@@ -198,12 +198,6 @@ connectMongoWithFallback();
 // إذا عيّنت REDIS_URL سيتم استخدامه لحظر IP بشكل موزّع (يفيد مع تعدد النسخ/إعادة التشغيل)
 const REDIS_URL = String(process.env.REDIS_URL || '').trim();
 let redisClient = null;
-const GEMINI_API_KEY = String(process.env.GEMINI_API_KEY || '').trim();
-const GEMINI_MODEL = String(process.env.GEMINI_MODEL || 'gemini-1.5-flash').trim() || 'gemini-1.5-flash';
-const GEMINI_TIMEOUT_MS = Math.min(
-    15_000,
-    Math.max(2_000, parseInt(String(process.env.GEMINI_TIMEOUT_MS || '8000'), 10) || 8000)
-);
 
 async function initRedis() {
     if (!REDIS_URL) return;
@@ -1345,6 +1339,10 @@ function hasArabic(text) {
 
 function dialectForRoom(room) {
     const r = String(room || '').toLowerCase();
+    if (r.includes('tech') || r.includes('technical') || r.includes('تقنية') || r.includes('مبرمج')) {
+        return { code: 'ar', labelAr: 'تقنية', labelEn: 'Tech' };
+    }
+    if (r.includes('general')) return { code: 'ar', labelAr: 'عام', labelEn: 'General' };
     if (r.includes('morocco')) return { code: 'ma', labelAr: 'المغرب', labelEn: 'Morocco' };
     if (r.includes('syria')) return { code: 'sy', labelAr: 'سوريا', labelEn: 'Syria' };
     if (r.includes('egypt')) return { code: 'eg', labelAr: 'مصر', labelEn: 'Egypt' };
@@ -1407,6 +1405,31 @@ function botToneForRoom(room) {
     return 'normal';
 }
 
+/** Gemini مفعّل فقط في غرف General و Tech (حسب اسم الغرفة) */
+function roomSupportsGemini(roomName) {
+    const r = String(roomName || '').trim().toLowerCase();
+    if (!r) return false;
+    if (/\bgeneral\b/.test(r)) return true;
+    if (/\btech\b|\btechnical\b|تقنية|مبرمج|programming|coding/.test(r)) return true;
+    return false;
+}
+
+function pickGeminiBotRoom(gender) {
+    if (gender === 'female' && Math.random() < 0.1) return 'Girls Only';
+    return Math.random() < 0.5 ? 'General' : 'Tech';
+}
+
+function getGeminiModelFromEnv() {
+    return String(process.env.GEMINI_MODEL || 'gemini-1.5-flash').trim() || 'gemini-1.5-flash';
+}
+
+function getGeminiTimeoutMsFromEnv() {
+    return Math.min(
+        15_000,
+        Math.max(2_000, parseInt(String(process.env.GEMINI_TIMEOUT_MS || '8000'), 10) || 8000)
+    );
+}
+
 function botTonePromptAr(tone) {
     if (tone === 'professional') return 'اكتب بصياغة احترافية بسيطة ومباشرة، بدون مبالغة.';
     if (tone === 'colloquial') return 'اكتب بلهجة عامية طبيعية وخفيفة، قصيرة وواضحة.';
@@ -1430,9 +1453,37 @@ function canUseGeminiRate(key = 'global') {
     return true;
 }
 
-async function geminiGenerateReply({ bot, userText, dialect, tone, history }) {
-    if (!GEMINI_API_KEY) return '';
-    if (!canUseGeminiRate('bot-chat')) return '';
+/**
+ * استدعاء Gemini — يقرأ GEMINI_API_KEY من process.env فقط عند كل محاولة.
+ * يسجّل كل محاولة وأي فشل في Logs (Render).
+ */
+async function generateGeminiResponse({ bot, userText, dialect, tone, history, room }) {
+    const apiKey = String(process.env.GEMINI_API_KEY || '').trim();
+    const model = getGeminiModelFromEnv();
+    const timeoutMs = getGeminiTimeoutMsFromEnv();
+    const roomTag = String(room || '').trim();
+
+    console.log('[Gemini] generateGeminiResponse: attempt', {
+        room: roomTag,
+        model,
+        timeoutMs,
+        hasKeyFromEnv: !!apiKey,
+        keyLength: apiKey.length,
+        bot: bot?.username,
+        dialect,
+        tone
+    });
+
+    if (!apiKey) {
+        console.warn('[Gemini] generateGeminiResponse: abort — GEMINI_API_KEY missing in process.env');
+        return { ok: false, text: '', reason: 'missing_env_GEMINI_API_KEY' };
+    }
+
+    if (!canUseGeminiRate('bot-chat')) {
+        console.warn('[Gemini] generateGeminiResponse: abort — rate_limit (per minute)');
+        return { ok: false, text: '', reason: 'rate_limit' };
+    }
+
     const d = String(dialect || bot?.dialect || 'ar');
     const safeTone = botTonePromptAr(tone || 'normal');
     const botName = String(bot?.username || 'Bot');
@@ -1449,6 +1500,7 @@ async function geminiGenerateReply({ bot, userText, dialect, tone, history }) {
         .join('\n');
     const prompt = [
         `أنت بوت دردشة اسمه "${botName}"، جنسك ${gender}, ولهجتك ${regionHint}.`,
+        `أنت في غرفة اسمها "${roomTag}" — التزم بنبرة الغرفة.`,
         safeTone,
         'القواعد:',
         '- رد قصير (8-28 كلمة غالباً).',
@@ -1465,11 +1517,11 @@ async function geminiGenerateReply({ bot, userText, dialect, tone, history }) {
     ].join('\n');
 
     const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+    const t = setTimeout(() => controller.abort(), timeoutMs);
+    const url =
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent` +
+        `?key=${encodeURIComponent(apiKey)}`;
     try {
-        const url =
-            `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent` +
-            `?key=${encodeURIComponent(GEMINI_API_KEY)}`;
         const r = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1483,12 +1535,48 @@ async function geminiGenerateReply({ bot, userText, dialect, tone, history }) {
                 contents: [{ role: 'user', parts: [{ text: prompt }] }]
             })
         });
-        if (!r.ok) return '';
-        const j = await r.json().catch(() => ({}));
+        const rawText = await r.text().catch(() => '');
+        let j = {};
+        try {
+            j = rawText ? JSON.parse(rawText) : {};
+        } catch {
+            j = {};
+        }
+        if (!r.ok) {
+            const apiErr = j?.error?.message || j?.error?.status || '';
+            console.error('[Gemini] generateGeminiResponse: HTTP error', {
+                status: r.status,
+                statusText: r.statusText,
+                apiError: apiErr,
+                bodyPreview: rawText.slice(0, 600)
+            });
+            return {
+                ok: false,
+                text: '',
+                reason: `http_${r.status}`,
+                detail: apiErr || rawText.slice(0, 400)
+            };
+        }
+        if (j?.error) {
+            console.error('[Gemini] generateGeminiResponse: API error object', j.error);
+            return { ok: false, text: '', reason: 'api_error', detail: JSON.stringify(j.error).slice(0, 400) };
+        }
         const out = j?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        return clampText(String(out || '').replace(/\s+/g, ' ').trim(), 140);
-    } catch {
-        return '';
+        const textOut = clampText(String(out || '').replace(/\s+/g, ' ').trim(), 140);
+        if (!textOut) {
+            console.warn('[Gemini] generateGeminiResponse: empty model output', {
+                promptFeedback: j?.promptFeedback,
+                candidates: j?.candidates
+            });
+            return { ok: false, text: '', reason: 'empty_output', detail: JSON.stringify(j?.promptFeedback || {}).slice(0, 300) };
+        }
+        console.log('[Gemini] generateGeminiResponse: success', { chars: textOut.length, bot: botName });
+        return { ok: true, text: textOut, reason: '' };
+    } catch (e) {
+        const name = e?.name || 'Error';
+        const msg = e?.message || String(e);
+        console.error('[Gemini] generateGeminiResponse: exception', { name, message: msg });
+        return { ok: false, text: '', reason: name, detail: msg };
     } finally {
         clearTimeout(t);
     }
@@ -1648,18 +1736,37 @@ function buildHistoryForModel(convState) {
 
 async function smartBotReply({ bot, userText, dialect, personaId, room, convState }) {
     const local = botAwareReply(bot, userText, dialect, personaId);
-    const tone = botToneForRoom(room);
+    const effectiveRoom = String(bot?.room || room || '').trim();
+    if (!roomSupportsGemini(effectiveRoom)) {
+        console.log('[Gemini] smartBotReply: skip — room not Gemini-enabled', {
+            effectiveRoom,
+            botRoom: bot?.room,
+            passedRoom: room,
+            bot: bot?.username
+        });
+        return local;
+    }
+    const tone = botToneForRoom(effectiveRoom);
     const history = buildHistoryForModel(convState);
-    const ai = await geminiGenerateReply({
+    const res = await generateGeminiResponse({
         bot,
         userText,
         dialect,
         tone,
-        history
+        history,
+        room: effectiveRoom
     });
-    if (!ai) return local;
-    const ar = hasArabic(userText) || hasArabic(ai);
-    const polished = ar ? casualizeArabic(dialect || bot.dialect || 'ar', ai) : ai;
+    if (!res.ok || !res.text) {
+        console.warn('[Gemini] smartBotReply: fallback local', {
+            reason: res.reason,
+            detail: res.detail,
+            bot: bot?.username,
+            room: effectiveRoom
+        });
+        return local;
+    }
+    const ar = hasArabic(userText) || hasArabic(res.text);
+    const polished = ar ? casualizeArabic(dialect || bot.dialect || 'ar', res.text) : res.text;
     return personaWrap(personaId, ar, clampText(polished, 110));
 }
 
@@ -1707,7 +1814,7 @@ function initRandomBots() {
         const color = gender === 'female' ? '#ff69b4' : '#00d2ff';
         const avatar = svgAvatarDataUrl(base[0], gender === 'female' ? '#db2777' : '#0284c7', gender);
         const persona = pickPersona(gender);
-        randomBotRegistry.push({ username, gender, dialect, color, avatar, persona });
+        randomBotRegistry.push({ username, gender, dialect, color, avatar, persona, room: 'General' });
     }
 }
 
@@ -1793,7 +1900,7 @@ function scheduleRandomBotReply(socket, userText) {
             userText,
             dialect,
             personaId: st.bot.persona || 'friendly',
-            room: 'Free Chat',
+            room: st.bot.room || 'General',
             convState: st
         });
         st.botMsgs++;
@@ -1992,7 +2099,7 @@ function scheduleBotPrivateReply({ fromSocket, bot, toUsername, userText }) {
             userText,
             dialect: humanRoomDialect || bot.dialect,
             personaId: bot.persona || 'friendly',
-            room: fromSocket?.data?.room || '',
+            room: bot.room || fromSocket?.data?.room || '',
             convState: state
         });
         const reply = identity ? `${identity}\n${replyCore}` : replyCore;
@@ -2019,10 +2126,6 @@ function initBots() {
     const BOT_COUNT = Math.min(200, Math.max(10, parseInt(String(process.env.BOT_COUNT || '80'), 10) || 80));
     const maleNames = ['Omar','Yousef','Khaled','Hassan','Sami','Nader','Tariq','Adel','Fares','Hamza','Ziad','Karim','Bilal','Anas','Badr'];
     const femaleNames = ['Sara','Lina','Nour','Huda','Maya','Aya','Reem','Rana','Farah','Jana','Mariam','Salma','Rita','Dina','Yara'];
-    const rooms = [
-        'Morocco','Saudi Arabia','Egypt','Palestine','Lebanon','Algeria','Tunisia','Bahrain','Qatar','UAE','Syria',
-        'Gulf Region','North Africa','Levant','Girls Only'
-    ];
 
     for (let i = 0; i < BOT_COUNT; i++) {
         const gender = Math.random() < 0.45 ? 'female' : 'male';
@@ -2035,7 +2138,7 @@ function initBots() {
         const persona = pickPersona(gender);
         const bot = { username, gender, color, avatar, room: '', dialect: 'ar', persona, age: null };
         botRegistry.set(uKey, bot);
-        botJoinRoom(bot, choice(rooms));
+        botJoinRoom(bot, pickGeminiBotRoom(gender));
     }
 
     // تنقّل دوري ورسائل خفيفة
@@ -2045,13 +2148,9 @@ function initBots() {
         const bot = choice(bots);
         const moveChance = 0.55;
         const sayChance = 0.35;
-        const rooms = [
-            'Morocco','Saudi Arabia','Egypt','Palestine','Lebanon','Algeria','Tunisia','Bahrain','Qatar','UAE','Syria',
-            'Gulf Region','North Africa','Levant','Girls Only'
-        ];
 
         if (Math.random() < moveChance) {
-            botJoinRoom(bot, choice(rooms));
+            botJoinRoom(bot, pickGeminiBotRoom(bot.gender));
         } else if (Math.random() < sayChance) {
             const d = bot.dialect || dialectForRoom(bot.room).code;
             const pack = DIALECT_PACKS[d] || DIALECT_PACKS.ar;
@@ -2741,7 +2840,7 @@ function printReady() {
     readyLogged = true;
     const port = server.address()?.port || listenPort;
     const giphyOk = !!(process.env.GIPHY_API_KEY || '').trim();
-    const geminiOk = !!GEMINI_API_KEY;
+    const geminiOk = !!String(process.env.GEMINI_API_KEY || '').trim();
     const prod = isProd ? ' (production)' : '';
     console.log(`\n🚀 السيرفر يعمل${prod} على المنفذ ${port} — الاستماع: ${listenHost}`);
     console.log(`   محلياً: http://localhost:${port}`);
@@ -2754,7 +2853,7 @@ function printReady() {
     );
     console.log(
         geminiOk
-            ? `🤖 Bots AI: Gemini مفعّل (${GEMINI_MODEL})`
+            ? `🤖 Bots AI: Gemini مفعّل (${getGeminiModelFromEnv()})`
             : '🤖 Bots AI: وضع محلي (Fallback) — أضف GEMINI_API_KEY لتفعيل Gemini'
     );
     console.log('');
