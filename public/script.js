@@ -726,7 +726,18 @@ const translations = {
         memberUsernamePh: 'اسم المستخدم',
         memberPasswordPh: 'كلمة المرور',
         memberLoginBtn: 'دخول',
-        memberInvalid: 'بيانات الدخول غير صحيحة'
+        memberInvalid: 'بيانات الدخول غير صحيحة',
+        googleDisabled:
+            'تسجيل الدخول بجوجل غير مُعدّ بعد. أضف GOOGLE_CLIENT_ID و GOOGLE_CLIENT_SECRET في إعدادات السيرفر.',
+        oauthErr_cancelled: 'ألغيت نافذة جوجل. يمكنك المحاولة مرة أخرى.',
+        oauthErr_token: 'فشل التحقق مع جوجل. حاول مرة أخرى لاحقاً.',
+        oauthErr_profile: 'تعذّر قراءة بيانات الحساب من جوجل.',
+        oauthErr_email_in_use: 'هذا البريد مسجّل مسبقاً كحساب عادي. سجّل الدخول بالاسم وكلمة المرور.',
+        oauthErr_account_conflict: 'تعارض في الحساب. تواصل مع الدعم إن استمرّ الأمر.',
+        oauthErr_banned_permanent: 'هذا الحساب محظور بشكل دائم.',
+        oauthErr_banned_temp: 'هذا الحساب محظور مؤقتاً.',
+        oauthErr_email_not_verified: 'يجب تأكيد البريد قبل الدخول.',
+        oauthErr_server: 'خطأ في السيرفر أثناء تسجيل الدخول بجوجل.'
         ,
         ctxReport: 'إبلاغ',
         ctxBlock: 'حظر',
@@ -901,7 +912,18 @@ const translations = {
         memberUsernamePh: 'Username',
         memberPasswordPh: 'Password',
         memberLoginBtn: 'Login',
-        memberInvalid: 'Invalid login credentials'
+        memberInvalid: 'Invalid login credentials',
+        googleDisabled:
+            'Google sign-in is not configured yet. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET on the server.',
+        oauthErr_cancelled: 'Google sign-in was cancelled. You can try again.',
+        oauthErr_token: 'Google verification failed. Try again later.',
+        oauthErr_profile: 'Could not read your Google profile.',
+        oauthErr_email_in_use: 'This email is already registered with a password. Sign in with username and password.',
+        oauthErr_account_conflict: 'Account conflict. Contact support if this persists.',
+        oauthErr_banned_permanent: 'This account is permanently banned.',
+        oauthErr_banned_temp: 'This account is temporarily banned.',
+        oauthErr_email_not_verified: 'Email must be verified before sign-in.',
+        oauthErr_server: 'Server error during Google sign-in.'
         ,
         ctxReport: 'Report',
         ctxBlock: 'Block',
@@ -1836,6 +1858,31 @@ function currentLang() {
 function tKey(key) {
     const lang = currentLang();
     return (translations[lang] && translations[lang][key]) || (translations.en[key] || '');
+}
+
+function messageForOauthErr(code) {
+    const k = `oauthErr_${String(code || '').replace(/[^a-z0-9_]/gi, '_')}`;
+    const msg = tKey(k);
+    if (msg) return msg;
+    return currentLang() === 'ar'
+        ? 'تعذّر إكمال تسجيل الدخول بجوجل.'
+        : 'Could not complete Google sign-in.';
+}
+
+/** بعد OAuth (كوكي فقط) أو فتح تبويب جديد — املأ authType/nickname من الجلسة */
+async function syncMemberSessionFromCookie() {
+    if (getSecureItem('authType') === 'member') return;
+    try {
+        const r = await secureFetch('/api/auth/verify');
+        if (!r.ok) return;
+        const data = await r.json().catch(() => ({}));
+        if (data.valid && data.username) {
+            setSecureItem('authType', 'member');
+            setSecureItem('nickname', data.username);
+        }
+    } catch {
+        /* ignore */
+    }
 }
 
 function updateTexts(lang) {
@@ -2863,6 +2910,24 @@ function leaveRoom() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+    const path0 = window.location.pathname || '';
+    const onLanding =
+        path0 === '/' || path0 === '' || path0.endsWith('index.html') || path0.endsWith('/index.html');
+    if (onLanding) {
+        const oerr = new URLSearchParams(window.location.search).get('oauth_err');
+        if (oerr) {
+            alert(messageForOauthErr(oerr));
+            try {
+                const u = new URL(window.location.href);
+                u.searchParams.delete('oauth_err');
+                const qs = u.searchParams.toString();
+                history.replaceState({}, '', u.pathname + (qs ? `?${qs}` : '') + u.hash);
+            } catch {
+                /* ignore */
+            }
+        }
+    }
+    await syncMemberSessionFromCookie();
     if (getSecureItem('authType') === 'member') {
         try {
             const r = await secureFetch('/api/auth/verify');
@@ -3169,24 +3234,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     document.getElementById('googleBtn')?.addEventListener('click', () => {
-        // تسجيل Google (يتطلب GOOGLE_CLIENT_ID في .env)
         const cid = (window.__GOOGLE_CLIENT_ID__ || '').trim();
         if (!cid) {
-            alert(currentLang() === 'ar'
-                ? 'تسجيل Google غير مفعّل بعد. ضع GOOGLE_CLIENT_ID في ملف .env ثم أعد تشغيل السيرفر.'
-                : 'Google sign-in is not configured. Set GOOGLE_CLIENT_ID in .env and restart server.');
+            alert(tKey('googleDisabled'));
             return;
         }
-        const redirectUri = `${location.origin}/api/auth/google/callback`;
-        const params = new URLSearchParams({
-            client_id: cid,
-            redirect_uri: redirectUri,
-            response_type: 'code',
-            scope: 'openid email profile',
-            include_granted_scopes: 'true',
-            prompt: 'select_account'
-        });
-        location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+        const apiBase = String(window.__API_PUBLIC_URL__ || '').replace(/\/$/, '');
+        const q = `return=${encodeURIComponent('/rooms.html')}`;
+        const startPath = `/api/auth/google/start?${q}`;
+        location.href = apiBase ? `${apiBase}${startPath}` : startPath;
     });
 
     document.getElementById('guestBtn')?.addEventListener('click', () => {

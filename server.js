@@ -198,6 +198,12 @@ connectMongoWithFallback();
 // إذا عيّنت REDIS_URL سيتم استخدامه لحظر IP بشكل موزّع (يفيد مع تعدد النسخ/إعادة التشغيل)
 const REDIS_URL = String(process.env.REDIS_URL || '').trim();
 let redisClient = null;
+const GEMINI_API_KEY = String(process.env.GEMINI_API_KEY || '').trim();
+const GEMINI_MODEL = String(process.env.GEMINI_MODEL || 'gemini-1.5-flash').trim() || 'gemini-1.5-flash';
+const GEMINI_TIMEOUT_MS = Math.min(
+    15_000,
+    Math.max(2_000, parseInt(String(process.env.GEMINI_TIMEOUT_MS || '8000'), 10) || 8000)
+);
 
 async function initRedis() {
     if (!REDIS_URL) return;
@@ -219,6 +225,8 @@ initRedis();
 const userSchema = new mongoose.Schema({
     username:  { type: String, required: true, unique: true, trim: true, maxlength: 20 },
     password:  { type: String, required: true },
+    /** معرّف Google (sub) — للحسابات التي سجّلت عبر OAuth */
+    googleSub: { type: String, default: null, unique: true, sparse: true },
     email:     { type: String, default: '', trim: true, lowercase: true, maxlength: 254 },
     emailVerified: { type: Boolean, default: false },
     emailVerifyTokenHash: { type: String, default: '' },
@@ -416,7 +424,11 @@ app.use((req, res, next) => {
 app.get('/config.js', (req, res) => {
     res.type('application/javascript');
     const cid = String(process.env.GOOGLE_CLIENT_ID || '');
-    res.send(`window.__GOOGLE_CLIENT_ID__ = ${JSON.stringify(cid)};`);
+    const api = String(process.env.PUBLIC_API_URL || '').replace(/\/$/, '');
+    res.send(
+        `window.__GOOGLE_CLIENT_ID__ = ${JSON.stringify(cid)};\n` +
+            `window.__API_PUBLIC_URL__ = ${JSON.stringify(api)};\n`
+    );
 });
 
 // ================= Helmet =================
@@ -450,7 +462,11 @@ const authLimiter = rateLimit({
 });
 
 app.use('/api/', apiLimiter);
-app.use('/api/auth/', authLimiter);
+app.use('/api/auth/', (req, res, next) => {
+    const ou = String(req.originalUrl || '');
+    if (ou.includes('/api/auth/google') || ou.includes('/auth/google')) return next();
+    authLimiter(req, res, next);
+});
 app.use('/socket.io', rateLimit({ windowMs: 15 * 60 * 1000, max: 100 }));
 
 // ================= CORS (نفس الأصل فقط حالياً) =================
@@ -623,6 +639,158 @@ function setAuthCookie(res, token) {
         path: '/',
         maxAge: maxAgeMs
     });
+}
+
+/** أصل الـ API العام (لـ OAuth redirect_uri خلف بروكسي أو واجهة منفصلة) */
+function publicApiOrigin(req) {
+    const fromEnv = String(process.env.PUBLIC_API_URL || '').trim();
+    if (fromEnv) {
+        try {
+            return new URL(fromEnv).origin;
+        } catch {
+            /* ignore */
+        }
+    }
+    const xfHost = String(req.headers['x-forwarded-host'] || '')
+        .split(',')[0]
+        .trim();
+    const hostHeader = xfHost || req.get('host') || 'localhost:3000';
+    const protoHeader = String(req.headers['x-forwarded-proto'] || '')
+        .split(',')[0]
+        .trim()
+        .toLowerCase();
+    let proto = 'http';
+    if (protoHeader === 'https' || req.secure) proto = 'https';
+    else if (String(req.protocol || '').toLowerCase().replace(/:$/, '') === 'https') proto = 'https';
+    const hostnameOnly = hostHeader.split(':')[0];
+    const isPublicTlsHost =
+        /\.onrender\.com$/i.test(hostnameOnly) ||
+        /\.railway\.app$/i.test(hostnameOnly) ||
+        /\.fly\.dev$/i.test(hostnameOnly) ||
+        /\.vercel\.app$/i.test(hostnameOnly);
+    if (isProd && isPublicTlsHost) proto = 'https';
+    return `${proto}://${hostHeader}`;
+}
+
+/** إزالة مسافة/شرطة أخيرة قد تسبب redirect_uri_mismatch مع Google */
+function normalizeGoogleOAuthRedirectUri(raw) {
+    let s = String(raw || '').trim();
+    if (!s) return '';
+    s = s.replace(/\/+$/, '');
+    try {
+        const u = new URL(s);
+        let path = u.pathname || '';
+        if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
+        return `${u.protocol}//${u.host}${path}${u.search}`;
+    } catch {
+        return s;
+    }
+}
+
+/**
+ * يجب أن يطابق حرفياً «Authorized redirect URIs» في Google Cloud.
+ * الأولوية: GOOGLE_REDIRECT_URI ثم GOOGLE_CALLBACK_URL (مثل Passport callbackURL)
+ * ثم الافتراضي: {أصل السيرفر}/auth/google/callback
+ */
+function googleOAuthRedirectUri(req) {
+    const explicit = normalizeGoogleOAuthRedirectUri(
+        process.env.GOOGLE_REDIRECT_URI || process.env.GOOGLE_CALLBACK_URL || ''
+    );
+    if (explicit) return explicit;
+    return `${publicApiOrigin(req)}/auth/google/callback`;
+}
+
+function googleOAuthReturnCookieOptions() {
+    return {
+        httpOnly: true,
+        secure: isProd,
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 10 * 60 * 1000
+    };
+}
+
+function sanitizeGoogleReturnPath(raw) {
+    let p = String(raw || '/rooms.html').trim();
+    if (!p.startsWith('/') || p.startsWith('//')) return '/rooms.html';
+    if (p.length > 200) return '/rooms.html';
+    return p;
+}
+
+function redirectAfterGoogle(req, res, path) {
+    const front = String(process.env.FRONTEND_ORIGIN || '').replace(/\/$/, '');
+    const p = sanitizeGoogleReturnPath(path);
+    if (front) return res.redirect(`${front}${p}`);
+    return res.redirect(p);
+}
+
+function redirectGoogleOAuthError(req, res, code) {
+    const q = `?oauth_err=${encodeURIComponent(code)}`;
+    const front = String(process.env.FRONTEND_ORIGIN || '').replace(/\/$/, '');
+    if (front) return res.redirect(`${front}/index.html${q}`);
+    return res.redirect(`/index.html${q}`);
+}
+
+async function pickUniqueUsername(base) {
+    let u = base;
+    let n = 0;
+    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    while (await User.findOne({ username: new RegExp(`^${esc(u)}$`, 'i') })) {
+        n += 1;
+        const suf = String(n);
+        u = (base.slice(0, Math.max(1, 20 - suf.length)) + suf).slice(0, 20);
+        if (n > 2000) {
+            u = `g${crypto.randomBytes(3).toString('hex')}`;
+            n = 0;
+        }
+    }
+    return u;
+}
+
+function usernameBaseFromGoogle(g) {
+    const email = String(g.email || '').toLowerCase();
+    const local = email.split('@')[0] || 'user';
+    let base = sanitizeUsername(local.replace(/\./g, '_'));
+    if (base.length < 3) {
+        const sub = String(g.sub || '').replace(/\D/g, '').slice(-8) || 'user';
+        base = sanitizeUsername(`g${sub}`) || 'guser';
+    }
+    return base.slice(0, 20);
+}
+
+async function exchangeGoogleAuthCode(code, redirectUri) {
+    const body = new URLSearchParams({
+        code: String(code),
+        client_id: String(process.env.GOOGLE_CLIENT_ID || ''),
+        client_secret: String(process.env.GOOGLE_CLIENT_SECRET || ''),
+        redirect_uri: redirectUri,
+        grant_type: 'authorization_code'
+    });
+    const r = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+        const err = new Error(j.error_description || j.error || 'token_exchange_failed');
+        err.details = j;
+        throw err;
+    }
+    return j;
+}
+
+async function fetchGoogleUserProfile(accessToken) {
+    const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: { Authorization: `Bearer ${accessToken}` }
+    });
+    const g = await r.json().catch(() => ({}));
+    if (!r.ok || !g.sub) {
+        const err = new Error('userinfo_failed');
+        err.details = g;
+        throw err;
+    }
+    return g;
 }
 
 async function verifyToken(req, res, next) {
@@ -939,6 +1107,143 @@ app.post('/api/auth/login', async (req, res) => {
     }
 });
 
+// —— Google OAuth (بدون Passport) — نفس redirect_uri في طلب التفويض وفي تبديل code ——
+function handleGoogleOAuthStart(req, res) {
+    const cid = String(process.env.GOOGLE_CLIENT_ID || '').trim();
+    const sec = String(process.env.GOOGLE_CLIENT_SECRET || '').trim();
+    if (!cid || !sec) {
+        return res.status(503).type('text/plain')
+            .send('Google OAuth is not configured (missing GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET).');
+    }
+    const state = crypto.randomBytes(24).toString('hex');
+    res.cookie('google_oauth_state', state, googleOAuthReturnCookieOptions());
+    const ret = sanitizeGoogleReturnPath(req.query.return);
+    res.cookie('google_oauth_return', ret, googleOAuthReturnCookieOptions());
+    const redirectUri = googleOAuthRedirectUri(req);
+    console.info('[Google OAuth] redirect_uri (must match Google Console exactly):', redirectUri);
+    const params = new URLSearchParams({
+        client_id: cid,
+        redirect_uri: redirectUri,
+        response_type: 'code',
+        scope: 'openid email profile',
+        state,
+        prompt: 'select_account'
+    });
+    res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+}
+
+async function handleGoogleOAuthCallback(req, res) {
+    try {
+        if (String(req.query.error || '').trim()) {
+            return redirectGoogleOAuthError(req, res, 'cancelled');
+        }
+        const code = String(req.query.code || '').trim();
+        const state = String(req.query.state || '').trim();
+        const cookies = parseCookies(req.headers.cookie || '');
+        const expected = String(cookies.google_oauth_state || '');
+        const returnPath = String(cookies.google_oauth_return || '/rooms.html');
+        res.clearCookie('google_oauth_state', { path: '/' });
+        res.clearCookie('google_oauth_return', { path: '/' });
+        if (!code || !state || !expected || state !== expected) {
+            return res.status(400).type('text/plain').send('Invalid OAuth state or missing code.');
+        }
+        const cid = String(process.env.GOOGLE_CLIENT_ID || '').trim();
+        const sec = String(process.env.GOOGLE_CLIENT_SECRET || '').trim();
+        if (!cid || !sec) {
+            return res.status(503).type('text/plain').send('Google OAuth is not configured.');
+        }
+        const redirectUri = googleOAuthRedirectUri(req);
+        let tokenJson;
+        try {
+            tokenJson = await exchangeGoogleAuthCode(code, redirectUri);
+        } catch (e) {
+            console.error('Google token exchange:', e?.message || e, e?.details || '');
+            return redirectGoogleOAuthError(req, res, 'token');
+        }
+        const access = String(tokenJson.access_token || '');
+        if (!access) {
+            return redirectGoogleOAuthError(req, res, 'token');
+        }
+        let g;
+        try {
+            g = await fetchGoogleUserProfile(access);
+        } catch (e) {
+            console.error('Google userinfo:', e?.message || e, e?.details || '');
+            return redirectGoogleOAuthError(req, res, 'profile');
+        }
+        const sub = String(g.sub || '');
+        const email = String(g.email || '').toLowerCase().trim();
+        if (!sub || !email || !isValidEmail(email)) {
+            return redirectGoogleOAuthError(req, res, 'profile');
+        }
+
+        let user = await User.findOne({ googleSub: sub });
+        if (!user) {
+            const byEmail = await User.findOne({ email });
+            if (byEmail) {
+                if (!byEmail.googleSub) {
+                    return redirectGoogleOAuthError(req, res, 'email_in_use');
+                }
+                if (byEmail.googleSub !== sub) {
+                    return redirectGoogleOAuthError(req, res, 'account_conflict');
+                }
+                user = byEmail;
+            }
+        }
+        if (!user) {
+            const base = usernameBaseFromGoogle(g);
+            const username = await pickUniqueUsername(base);
+            const rndPass = crypto.randomBytes(32).toString('hex');
+            const hash = await bcrypt.hash(rndPass, 12);
+            user = await User.create({
+                username,
+                password: hash,
+                googleSub: sub,
+                email,
+                emailVerified: true,
+                emailVerifyTokenHash: '',
+                emailVerifyExpiresAt: null,
+                gender: 'male'
+            });
+        } else {
+            if (user.email !== email) {
+                user.email = email;
+                user.emailVerified = true;
+            }
+            await user.save();
+        }
+
+        const now = new Date();
+        if (user.banExpiresAt && user.banExpiresAt <= now) {
+            user.banExpiresAt = null;
+            user.banReason = '';
+            await user.save();
+        }
+        if (user.permanentlyBanned) {
+            return redirectGoogleOAuthError(req, res, 'banned_permanent');
+        }
+        if (user.banExpiresAt && user.banExpiresAt > now) {
+            return redirectGoogleOAuthError(req, res, 'banned_temp');
+        }
+        if (requireEmailVerifiedForLogin() && !user.emailVerified) {
+            return redirectGoogleOAuthError(req, res, 'email_not_verified');
+        }
+
+        await User.findByIdAndUpdate(user._id, { lastSeen: new Date() });
+        const token = signUserJwt(user);
+        setAuthCookie(res, token);
+        return redirectAfterGoogle(req, res, returnPath);
+    } catch (e) {
+        console.error('Google OAuth callback:', e);
+        return redirectGoogleOAuthError(req, res, 'server');
+    }
+}
+
+app.get('/api/auth/google/start', handleGoogleOAuthStart);
+app.get('/auth/google/start', handleGoogleOAuthStart);
+app.get('/api/auth/google/callback', handleGoogleOAuthCallback);
+app.get('/auth/google/callback', handleGoogleOAuthCallback);
+
 // التحقق من التوكن
 app.get('/api/auth/verify', verifyToken, (req, res) => {
     res.json({ valid: true, username: req.user.username });
@@ -1089,6 +1394,106 @@ const DIALECT_PACKS = {
     }
 };
 
+const geminiRateState = new Map(); // key -> { windowStart, used }
+const GEMINI_RATE_LIMIT_PER_MIN = Math.min(
+    120,
+    Math.max(6, parseInt(String(process.env.GEMINI_RATE_LIMIT_PER_MIN || '40'), 10) || 40)
+);
+
+function botToneForRoom(room) {
+    const r = String(room || '').toLowerCase();
+    if (/(tech|technical|تقنية|مبرمج|coding|programming)/.test(r)) return 'professional';
+    if (/(free|casual|دردشة حرة|حره|فضفضة|فضفضه)/.test(r)) return 'colloquial';
+    return 'normal';
+}
+
+function botTonePromptAr(tone) {
+    if (tone === 'professional') return 'اكتب بصياغة احترافية بسيطة ومباشرة، بدون مبالغة.';
+    if (tone === 'colloquial') return 'اكتب بلهجة عامية طبيعية وخفيفة، قصيرة وواضحة.';
+    return 'اكتب بلهجة طبيعية يومية متوازنة.';
+}
+
+function canUseGeminiRate(key = 'global') {
+    const now = Date.now();
+    const winMs = 60_000;
+    const row = geminiRateState.get(key) || { windowStart: now, used: 0 };
+    if (now - row.windowStart >= winMs) {
+        row.windowStart = now;
+        row.used = 0;
+    }
+    if (row.used >= GEMINI_RATE_LIMIT_PER_MIN) {
+        geminiRateState.set(key, row);
+        return false;
+    }
+    row.used += 1;
+    geminiRateState.set(key, row);
+    return true;
+}
+
+async function geminiGenerateReply({ bot, userText, dialect, tone, history }) {
+    if (!GEMINI_API_KEY) return '';
+    if (!canUseGeminiRate('bot-chat')) return '';
+    const d = String(dialect || bot?.dialect || 'ar');
+    const safeTone = botTonePromptAr(tone || 'normal');
+    const botName = String(bot?.username || 'Bot');
+    const gender = bot?.gender === 'female' ? 'female' : 'male';
+    const regionHint =
+        d === 'ma' ? 'مغربي'
+            : d === 'sy' ? 'سوري'
+                : d === 'eg' ? 'مصري'
+                    : d === 'gulf' ? 'خليجي'
+                        : 'عربي';
+    const compactHistory = (Array.isArray(history) ? history : [])
+        .slice(-10)
+        .map((m) => `${m.role === 'bot' ? 'bot' : 'user'}: ${String(m.text || '').slice(0, 180)}`)
+        .join('\n');
+    const prompt = [
+        `أنت بوت دردشة اسمه "${botName}"، جنسك ${gender}, ولهجتك ${regionHint}.`,
+        safeTone,
+        'القواعد:',
+        '- رد قصير (8-28 كلمة غالباً).',
+        '- لا فصحى ثقيلة. لا إسهاب.',
+        '- لا تدّعي قدرات تقنية/حقيقية غير موجودة.',
+        '- إذا سُئلت من وين أنت: اذكر منطقتك/لهجتك باختصار.',
+        '- إذا الرسالة غير واضحة: اسأل سؤال متابعة قصير جداً.',
+        '',
+        'آخر سياق (الأحدث في النهاية):',
+        compactHistory || '(لا يوجد)',
+        '',
+        `رسالة المستخدم الحالية: ${String(userText || '').slice(0, 300)}`,
+        'اكتب الرد فقط بدون شرح.'
+    ].join('\n');
+
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+    try {
+        const url =
+            `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent` +
+            `?key=${encodeURIComponent(GEMINI_API_KEY)}`;
+        const r = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify({
+                generationConfig: {
+                    temperature: 0.85,
+                    topP: 0.9,
+                    maxOutputTokens: 90
+                },
+                contents: [{ role: 'user', parts: [{ text: prompt }] }]
+            })
+        });
+        if (!r.ok) return '';
+        const j = await r.json().catch(() => ({}));
+        const out = j?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        return clampText(String(out || '').replace(/\s+/g, ' ').trim(), 140);
+    } catch {
+        return '';
+    } finally {
+        clearTimeout(t);
+    }
+}
+
 function clampText(s, maxLen) {
     const t = String(s || '').trim();
     if (t.length <= maxLen) return t;
@@ -1233,6 +1638,31 @@ function botAwareReply(bot, userText, dialect, personaId) {
     return personaWrap(personaId, ar, clampText(base, 90));
 }
 
+function buildHistoryForModel(convState) {
+    const h = Array.isArray(convState?.history) ? convState.history : [];
+    return h.slice(-10).map((m) => ({
+        role: String(m.from || '').toLowerCase() === 'bot' ? 'bot' : 'user',
+        text: String(m.text || '')
+    }));
+}
+
+async function smartBotReply({ bot, userText, dialect, personaId, room, convState }) {
+    const local = botAwareReply(bot, userText, dialect, personaId);
+    const tone = botToneForRoom(room);
+    const history = buildHistoryForModel(convState);
+    const ai = await geminiGenerateReply({
+        bot,
+        userText,
+        dialect,
+        tone,
+        history
+    });
+    if (!ai) return local;
+    const ar = hasArabic(userText) || hasArabic(ai);
+    const polished = ar ? casualizeArabic(dialect || bot.dialect || 'ar', ai) : ai;
+    return personaWrap(personaId, ar, clampText(polished, 110));
+}
+
 function dialectForRandomRegion(region) {
     const r = String(region || '').toLowerCase();
     // region في random = 'all' أو قيمة مخصصة من الواجهة (قد تكون بلد/إقليم)
@@ -1246,23 +1676,36 @@ function dialectForRandomRegion(region) {
     return 'ar';
 }
 
+function botNameTaken(username) {
+    const key = String(username || '').toLowerCase();
+    if (!key) return true;
+    if (botRegistry.has(key)) return true;
+    if (randomBotRegistry.some((b) => String(b.username || '').toLowerCase() === key)) return true;
+    return false;
+}
+
+function buildUniqueBotUsername(base, maxLen = 20) {
+    const stem = sanitizeUsername(base).slice(0, Math.max(3, maxLen - 5)) || 'User';
+    for (let i = 0; i < 80; i++) {
+        const tag = randInt(100, 9999);
+        const candidate = `${stem}${tag}`.slice(0, maxLen);
+        if (!botNameTaken(candidate)) return candidate;
+    }
+    return `${stem}${crypto.randomBytes(2).toString('hex')}`.slice(0, maxLen);
+}
+
 function initRandomBots() {
     if (randomBotRegistry.length) return;
     const maleNames = ['Omar','Yousef','Khaled','Hassan','Sami','Nader','Tariq','Adel','Fares','Hamza','Ziad','Karim','Bilal','Anas','Badr','Rami','Majd','Iyad','Saad','Hani'];
     const femaleNames = ['Sara','Lina','Nour','Huda','Maya','Aya','Reem','Rana','Farah','Jana','Mariam','Salma','Rita','Dina','Yara','Laila','Hiba','Ruba','Sahar','Noha'];
     const dialects = ['ma', 'sy', 'eg', 'gulf', 'ar'];
-    const seen = new Set();
     while (randomBotRegistry.length < 50) {
         const gender = Math.random() < 0.5 ? 'female' : 'male';
         const base = gender === 'female' ? choice(femaleNames) : choice(maleNames);
-        const tag = randInt(10, 999);
-        const username = `${base}${tag}`;
-        const key = username.toLowerCase();
-        if (seen.has(key) || botRegistry.has(key)) continue;
-        seen.add(key);
+        const username = buildUniqueBotUsername(base);
         const dialect = choice(dialects);
         const color = gender === 'female' ? '#ff69b4' : '#00d2ff';
-        const avatar = svgAvatarDataUrl(base[0], gender === 'female' ? '#db2777' : '#0284c7');
+        const avatar = svgAvatarDataUrl(base[0], gender === 'female' ? '#db2777' : '#0284c7', gender);
         const persona = pickPersona(gender);
         randomBotRegistry.push({ username, gender, dialect, color, avatar, persona });
     }
@@ -1329,6 +1772,9 @@ function scheduleRandomBotReply(socket, userText) {
     const st = randomBotConversations.get(socket.id);
     if (!st || !st.bot) return;
     st.humanMsgs++;
+    st.history = Array.isArray(st.history) ? st.history : [];
+    st.history.push({ from: 'user', text: userText, at: Date.now() });
+    if (st.history.length > 12) st.history.splice(0, st.history.length - 12);
     const first = st.botMsgs === 0;
     let delaySec;
     if (first) {
@@ -1339,11 +1785,20 @@ function scheduleRandomBotReply(socket, userText) {
         if ((st.humanMsgs + st.botMsgs) % 6 === 0) delaySec += 5; // توقف قصير بعد كل ~6 رسائل
     }
     const dialect = st.dialect || st.bot.dialect || 'ar';
-    const reply = botAwareReply(st.bot, userText, dialect, st.bot.persona || 'friendly');
-    setTimeout(() => {
+    setTimeout(async () => {
         // ربما انتهت الجلسة أثناء الانتظار
         if (!socket.randomBot || !randomBotConversations.has(socket.id)) return;
+        const reply = await smartBotReply({
+            bot: st.bot,
+            userText,
+            dialect,
+            personaId: st.bot.persona || 'friendly',
+            room: 'Free Chat',
+            convState: st
+        });
         st.botMsgs++;
+        st.history.push({ from: 'bot', text: reply, at: Date.now() });
+        if (st.history.length > 12) st.history.splice(0, st.history.length - 12);
         socket.emit('randomChatMessage', {
             from: st.bot.username,
             text: reply,
@@ -1364,15 +1819,20 @@ function choice(arr) {
     return arr[Math.floor(Math.random() * arr.length)];
 }
 
-function svgAvatarDataUrl(letter, bg) {
+function svgAvatarDataUrl(letter, bg, gender = 'male') {
     const safeLetter = String(letter || '?').slice(0, 2).toUpperCase();
     const fill = String(bg || '#334155');
+    const hair = gender === 'female' ? '#4a2f2f' : '#1f2937';
     const svg =
         `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">` +
         `<defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1">` +
         `<stop offset="0" stop-color="${fill}"/><stop offset="1" stop-color="#0b1220"/></linearGradient></defs>` +
         `<circle cx="48" cy="48" r="46" fill="url(#g)"/>` +
-        `<text x="48" y="56" text-anchor="middle" font-family="Segoe UI, Arial" font-size="34" font-weight="800" fill="#fff">${safeLetter}</text>` +
+        `<circle cx="48" cy="50" r="20" fill="#f8d6b8"/>` +
+        `<ellipse cx="48" cy="33" rx="22" ry="12" fill="${hair}"/>` +
+        `<circle cx="41" cy="50" r="2.1" fill="#1f2937"/><circle cx="55" cy="50" r="2.1" fill="#1f2937"/>` +
+        `<path d="M41 59 Q48 64 55 59" stroke="#7f1d1d" stroke-width="2.2" fill="none" stroke-linecap="round"/>` +
+        `<text x="48" y="85" text-anchor="middle" font-family="Segoe UI, Arial" font-size="13" font-weight="700" fill="#fff">${safeLetter}</text>` +
         `</svg>`;
     return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
@@ -1494,7 +1954,7 @@ function botReplyText(bot, userText, ctx = {}) {
 function scheduleBotPrivateReply({ fromSocket, bot, toUsername, userText }) {
     const { state } = getOrInitBotConv(toUsername, bot.username);
     state.humanMsgs++;
-    state.history.push({ from: toUsername, text: userText, at: Date.now() });
+    state.history.push({ from: 'user', text: userText, at: Date.now() });
     if (state.history.length > 12) state.history.splice(0, state.history.length - 12);
 
     const first = state.botMsgs === 0;
@@ -1526,16 +1986,18 @@ function scheduleBotPrivateReply({ fromSocket, bot, toUsername, userText }) {
                 return `${verb} ${who} 🙂`;
             })()
             : '';
-    const replyCore = botAwareReply(
-        bot,
-        userText,
-        humanRoomDialect || bot.dialect,
-        bot.persona || 'friendly'
-    );
-    const reply = identity ? `${identity}\n${replyCore}` : replyCore;
-    setTimeout(() => {
+    setTimeout(async () => {
+        const replyCore = await smartBotReply({
+            bot,
+            userText,
+            dialect: humanRoomDialect || bot.dialect,
+            personaId: bot.persona || 'friendly',
+            room: fromSocket?.data?.room || '',
+            convState: state
+        });
+        const reply = identity ? `${identity}\n${replyCore}` : replyCore;
         state.botMsgs++;
-        state.history.push({ from: bot.username, text: reply, at: Date.now() });
+        state.history.push({ from: 'bot', text: reply, at: Date.now() });
         if (state.history.length > 12) state.history.splice(0, state.history.length - 12);
         const payload = {
             from: bot.username,
@@ -1565,12 +2027,11 @@ function initBots() {
     for (let i = 0; i < BOT_COUNT; i++) {
         const gender = Math.random() < 0.45 ? 'female' : 'male';
         const base = gender === 'female' ? choice(femaleNames) : choice(maleNames);
-        const tag = randInt(10, 999);
-        const username = `${base}${tag}`;
+        const username = buildUniqueBotUsername(base);
         const uKey = username.toLowerCase();
         if (botRegistry.has(uKey)) { i--; continue; }
         const color = gender === 'female' ? '#ff69b4' : '#00d2ff';
-        const avatar = svgAvatarDataUrl(base[0], gender === 'female' ? '#db2777' : '#0284c7');
+        const avatar = svgAvatarDataUrl(base[0], gender === 'female' ? '#db2777' : '#0284c7', gender);
         const persona = pickPersona(gender);
         const bot = { username, gender, color, avatar, room: '', dialect: 'ar', persona, age: null };
         botRegistry.set(uKey, bot);
@@ -2206,6 +2667,7 @@ io.on('connection', (socket) => {
                 dialect: desiredDialect || picked.dialect || 'ar',
                 humanMsgs: 0,
                 botMsgs: 0,
+                history: [],
                 behavior,
                 skipScheduled: false
             });
@@ -2279,6 +2741,7 @@ function printReady() {
     readyLogged = true;
     const port = server.address()?.port || listenPort;
     const giphyOk = !!(process.env.GIPHY_API_KEY || '').trim();
+    const geminiOk = !!GEMINI_API_KEY;
     const prod = isProd ? ' (production)' : '';
     console.log(`\n🚀 السيرفر يعمل${prod} على المنفذ ${port} — الاستماع: ${listenHost}`);
     console.log(`   محلياً: http://localhost:${port}`);
@@ -2288,6 +2751,11 @@ function printReady() {
         giphyOk
             ? '🎬 GIF: مفعّل عبر Giphy API (ترند + بحث)'
             : '🎬 GIF: قائمة محلية — أضف GIPHY_API_KEY في ملف .env لتفعيل Giphy'
+    );
+    console.log(
+        geminiOk
+            ? `🤖 Bots AI: Gemini مفعّل (${GEMINI_MODEL})`
+            : '🤖 Bots AI: وضع محلي (Fallback) — أضف GEMINI_API_KEY لتفعيل Gemini'
     );
     console.log('');
 }
