@@ -1441,7 +1441,7 @@ function getGeminiModelFromEnv() {
 function getGeminiTimeoutMsFromEnv() {
     return Math.min(
         15_000,
-        Math.max(2_000, parseInt(String(process.env.GEMINI_TIMEOUT_MS || '8000'), 10) || 8000)
+        Math.max(2_000, parseInt(String(process.env.GEMINI_TIMEOUT_MS || '10000'), 10) || 10000)
     );
 }
 
@@ -1477,6 +1477,7 @@ function buildGeminiSystemPrompt({ botName, gender, toneLine, regionHint, roomTa
         '',
         '**أسلوبك:**',
         `- ${t1} على قدر السؤال (سؤال قصير ← رد قصير، سؤال أطول ← رد مفيد قصير).`,
+        `- اكتب جُملاً كاملة لا تنقطع في منتصفها؛ إذا احتجت للاختصار اختصر المعنى لكن أنهِ الجملة بشكل طبيعي.`,
         `- دائماً ${t2} المستخدم سؤالاً قصيراً في نهاية ردك (مثل «وأنت؟»، «شو رأيك؟»، «من وين أنت؟»).`,
         `- ${t3} اسم المستخدم إذا ذكره؛ ${peerHint ? `(${peerHint})` : 'إن وُجد في الرسالة استخدمه بلطف.'}`,
         `- لا ${t4} نفسك أولاً بطريقة مزعجة أو طويلة؛ ${tWait}.`,
@@ -1552,7 +1553,7 @@ async function generateGeminiResponse({ bot, userText, dialect, tone, history, r
 
     const d = String(dialect || bot?.dialect || 'ar');
     const toneLine = botTonePromptAr(tone || 'normal');
-    const botName = String(bot?.username || 'صديق');
+    const botName = String(bot?.displayName || bot?.username || 'صديق');
     const gender = bot?.gender === 'female' ? 'female' : 'male';
     const regionHint =
         d === 'ma' ? 'مغربي'
@@ -1597,7 +1598,7 @@ async function generateGeminiResponse({ bot, userText, dialect, tone, history, r
                 generationConfig: {
                     temperature: 0.8,
                     topP: 0.9,
-                    maxOutputTokens: 120
+                    maxOutputTokens: 150
                 },
                 contents: [{ role: 'user', parts: [{ text: userTurn }] }]
             })
@@ -1629,7 +1630,7 @@ async function generateGeminiResponse({ bot, userText, dialect, tone, history, r
             return { ok: false, text: '', reason: 'api_error', detail: JSON.stringify(j.error).slice(0, 400) };
         }
         const out = j?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        const textOut = clampText(String(out || '').replace(/\s+/g, ' ').trim(), 200);
+        const textOut = clampTextWordBoundary(String(out || '').replace(/\s+/g, ' ').trim(), 200);
         if (!textOut) {
             console.warn('[Gemini] generateGeminiResponse: empty model output', {
                 promptFeedback: j?.promptFeedback,
@@ -1655,11 +1656,50 @@ function clampText(s, maxLen) {
     return t.slice(0, maxLen).trim();
 }
 
+function clampTextWordBoundary(s, maxLen) {
+    const t = String(s || '').replace(/\s+/g, ' ').trim();
+    if (t.length <= maxLen) return t;
+    const cut = t.slice(0, maxLen);
+    const i = Math.max(cut.lastIndexOf(' '), cut.lastIndexOf('،'), cut.lastIndexOf('.'), cut.lastIndexOf('!'), cut.lastIndexOf('?'));
+    const out = (i > 20 ? cut.slice(0, i) : cut).trim();
+    return out || cut.trim();
+}
+
+function ensureEndsWithQuestion(dialect, ar, text) {
+    const t = String(text || '').trim();
+    if (!t) return t;
+    if (/[؟?]\s*$/.test(t)) return t;
+    const q = shortFollowUp(dialect, ar);
+    return `${t} ${q}`;
+}
+
+function tooShortHumanReply(text) {
+    const t = String(text || '').trim();
+    if (!t) return true;
+    const words = t.split(/\s+/).filter(Boolean);
+    if (t.length < 6) return true;
+    if (words.length < 2 && t.length < 12) return true;
+    // أمثلة سيئة
+    if (/^(أنا|اه|آه|حلو|تمام|ok|okay)\b$/i.test(t)) return true;
+    return false;
+}
+
 function shortFollowUp(dialect, ar) {
     if (!ar) return choice(['Why?', 'How?', 'Then?', 'What do you mean?']);
     const d = String(dialect || 'ar');
     const pack = DIALECT_PACKS[d] || DIALECT_PACKS.ar;
     return choice(pack.qShort || DIALECT_PACKS.ar.qShort);
+}
+
+function botDisplayNameFromUsername(username) {
+    const s = String(username || '').trim();
+    if (!s) return 'صديق';
+    // إزالة الأرقام والشرطات/الرموز الزائدة من آخر الاسم
+    const noDigits = s.replace(/[0-9٠-٩]+/g, '').trim();
+    // تنظيف نهايات مثل '_' '-' وغيرها
+    const cleaned = noDigits.replace(/[_\-]+$/g, '').trim();
+    // إذا بقي شيء معقول رجّعه، وإلا رجّع الاسم الأصلي بدون قص
+    return cleaned.length >= 2 ? cleaned.slice(0, 22) : s.slice(0, 22);
 }
 
 function casualizeArabic(dialect, text) {
@@ -1746,9 +1786,10 @@ function botAwareReply(bot, userText, dialect, personaId) {
         return personaWrap(personaId, ar, ar ? casualizeArabic(d, g) : g);
     }
     if (a.intents.includes('who')) {
+        const shown = String(bot?.displayName || botDisplayNameFromUsername(bot?.username) || bot?.username || 'صديق');
         const r = ar
-            ? `أنا ${bot.username} 🙂`
-            : `I'm ${bot.username}.`;
+            ? `أنا ${shown} 🙂`
+            : `I'm ${shown}.`;
         return personaWrap(personaId, ar, ar ? casualizeArabic(d, r) : r);
     }
     if (a.intents.includes('age')) {
@@ -1802,7 +1843,7 @@ function buildHistoryForModel(convState) {
 }
 
 async function smartBotReply({ bot, userText, dialect, personaId, room, convState, peerUsername }) {
-    const local = botAwareReply(bot, userText, dialect, personaId);
+    const localRaw = botAwareReply(bot, userText, dialect, personaId);
     const effectiveRoom = String(bot?.room || room || '').trim();
     if (!roomSupportsGemini(effectiveRoom)) {
         console.log('[Gemini] smartBotReply: skip — room not Gemini-enabled', {
@@ -1811,7 +1852,8 @@ async function smartBotReply({ bot, userText, dialect, personaId, room, convStat
             passedRoom: room,
             bot: bot?.username
         });
-        return local;
+        const arLocal = hasArabic(userText) || hasArabic(localRaw);
+        return ensureEndsWithQuestion(dialect || bot?.dialect || 'ar', arLocal, clampTextWordBoundary(localRaw, 200));
     }
     const tone = botToneForRoom(effectiveRoom);
     const history = buildHistoryForModel(convState);
@@ -1831,11 +1873,22 @@ async function smartBotReply({ bot, userText, dialect, personaId, room, convStat
             bot: bot?.username,
             room: effectiveRoom
         });
-        return local;
+        const arLocal = hasArabic(userText) || hasArabic(localRaw);
+        return ensureEndsWithQuestion(dialect || bot?.dialect || 'ar', arLocal, clampTextWordBoundary(localRaw, 200));
     }
     const ar = hasArabic(userText) || hasArabic(res.text);
     const polished = ar ? casualizeArabic(dialect || bot.dialect || 'ar', res.text) : res.text;
-    return personaWrap(personaId, ar, clampText(polished, 200));
+    const withQ = ensureEndsWithQuestion(dialect || bot?.dialect || 'ar', ar, polished);
+    const finalText = clampTextWordBoundary(withQ, 200);
+    if (tooShortHumanReply(finalText)) {
+        console.warn('[Gemini] smartBotReply: gemini too short/unhelpful -> local', {
+            bot: bot?.username,
+            room: effectiveRoom
+        });
+        const arLocal = hasArabic(userText) || hasArabic(localRaw);
+        return ensureEndsWithQuestion(dialect || bot?.dialect || 'ar', arLocal, clampTextWordBoundary(localRaw, 200));
+    }
+    return personaWrap(personaId, ar, finalText);
 }
 
 function dialectForRandomRegion(region) {
@@ -1902,7 +1955,16 @@ function initRandomBots() {
         const color = gender === 'female' ? '#ff69b4' : '#00d2ff';
         const avatar = svgAvatarDataUrl(firstLetterForAvatar(username), gender === 'female' ? '#db2777' : '#0284c7', gender);
         const persona = pickPersona(gender);
-        randomBotRegistry.push({ username, gender, dialect, color, avatar, persona, room: 'General' });
+        randomBotRegistry.push({
+            username,
+            displayName: botDisplayNameFromUsername(username),
+            gender,
+            dialect,
+            color,
+            avatar,
+            persona,
+            room: 'General'
+        });
     }
 }
 
@@ -2102,8 +2164,146 @@ function botSayInRoom(bot, text) {
         avatar: bot.avatar,
         coverPhoto: null,
         isSystem: false,
+        mentions: [],
         time: new Date().toLocaleTimeString()
     });
+}
+
+// ====== Room bot chatter (bot-bot + triggered) ======
+const BOT_SEED_RAW_NAMES = [
+    'Zeyad184', 'عادل دولا', 'وحيد جده', 'Ahmed9705', 'Khaled @', 'مهندس مغترب مصري', 'اربعيني محترم دمياط',
+    '★★دكتور♤ شهريار★★', 'Hamza2999', 'مي253', 'Captain Jo', 'Sara26.', '★فُہخہامه★', 'AHMED GOKr',
+    'جيم وحركات', 'Nasri2222', 'صديقك الخاص', 'Moaz Mamdouh', '$☜صـــابــــر☞$', 'مغربية خمسينية',
+    'اسكندرانى جريئ', 'Swr hlwa', 'عمرو الاسيوطى', 'محاسب من بورسعيد', 'سباك الغردقه2', 'نيوف19',
+    'الأستاذة', 'الاسواني الحكيم', 'لولو637', 'خياال21', 'مايكل 63', 'Sevenup', 'موكا..', 'ℝ𝔸ℕ𝔸'
+];
+
+function cleanSeedDisplayName(s) {
+    // تنظيف "أكثر": إزالة الزخارف/الرموز المبالغ فيها مع الإبقاء على العربية/اللاتينية والأرقام والمسافات
+    let t = String(s || '').trim();
+    t = t.replace(/[\u2000-\u206F]/g, ' ');
+    t = t.replace(/[★☆♤♠︎♣︎♦︎•·▪️️✬✦✧✩❣️♥️❤️🌚😂🤣😍🌹🫦]+/gu, ' ');
+    t = t.replace(/[^\p{L}\p{N}\s._-]+/gu, ' ');
+    t = t.replace(/\s+/g, ' ').trim();
+    if (!t) return 'صديق';
+    return t.slice(0, 20);
+}
+
+function buildUniqueBotUsernameFromSeed(raw) {
+    const base = cleanSeedDisplayName(raw);
+    // جرّب الاسم كما هو أولاً، ثم أضف لاحقة بسيطة عند التضارب
+    for (let i = 0; i < 60; i++) {
+        const candidate = i === 0 ? base : `${base} ${i + 1}`.slice(0, 20);
+        const key = candidate.toLowerCase();
+        if (!botNameTaken(candidate) && !botRegistry.has(key)) return candidate;
+    }
+    return buildUniqueBotUsername(base);
+}
+
+const roomBotChatterState = new Map(); // room -> { windowStart, used }
+function canBotTalkInRoom(room, limitPerMin = 6) {
+    const r = String(room || '').trim();
+    if (!r) return false;
+    const now = Date.now();
+    const winMs = 60_000;
+    const row = roomBotChatterState.get(r) || { windowStart: now, used: 0 };
+    if (now - row.windowStart >= winMs) { row.windowStart = now; row.used = 0; }
+    if (row.used >= limitPerMin) { roomBotChatterState.set(r, row); return false; }
+    row.used += 1;
+    roomBotChatterState.set(r, row);
+    return true;
+}
+
+function pickBotsInRoom(room, want = 2) {
+    const bots = Array.from(botRegistry.values()).filter((b) => b.room === room);
+    if (bots.length < want) return [];
+    const out = [];
+    const pool = bots.slice();
+    while (out.length < want && pool.length) {
+        const b = pool.splice(randInt(0, pool.length - 1), 1)[0];
+        if (b) out.push(b);
+    }
+    return out;
+}
+
+function roomScriptLinePack(ar = true) {
+    if (!ar) {
+        return {
+            greet: ['Hi', 'Hey', 'Hello'],
+            replyGreet: ['Hey 🙂', 'Hello!', 'Hi there'],
+            bored: ['Bored…', 'Nothing new 😅', 'So quiet here'],
+            ask: ['What’s up?', 'How’s your day?', 'Any plans?']
+        };
+    }
+    return {
+        greet: ['هلا', 'هاي', 'صباح الخير', 'مساء الخير', 'هلا فيكم'],
+        replyGreet: ['هلا 🙂', 'صباح النور', 'مساء الورد', 'أهلين'],
+        bored: ['ملل 😅', 'الجو هادي', 'وين الناس؟'],
+        ask: ['شو الأخبار؟', 'وش مسوين؟', 'من وين الشباب؟', 'مين صاحي؟']
+    };
+}
+
+function scheduleBotRoomSay(bot, room, text, delayMs) {
+    if (!bot || !room) return;
+    setTimeout(() => {
+        // ممكن يكون تنقل
+        if (bot.room !== room) return;
+        if (!canBotTalkInRoom(room, 6)) return;
+        botSayInRoom(bot, text);
+    }, Math.max(350, delayMs || 0));
+}
+
+function maybeTriggerRoomBotsOnHumanMessage({ room, humanText }) {
+    const cleanRoom = String(room || '').trim();
+    const t = String(humanText || '').trim();
+    if (!cleanRoom || !t) return;
+    if (!roomUsersList.has(cleanRoom)) return;
+    const a = analyzeMsg(t);
+    const ar = a.ar;
+    const pack = roomScriptLinePack(ar);
+    const greetHit = ar ? /(هلا|هاي|سلام|صباح|مساء)/u.test(t) : /\b(hi|hello|hey|morning|evening)\b/i.test(t);
+    const boredHit = ar ? /(ملل|زهقان|طفشان)/u.test(t) : /\b(bored)\b/i.test(t);
+    const whereGirls = ar ? /(فين البنات|هيا البنات|البنات فين)/u.test(t) : false;
+
+    if (!(greetHit || boredHit || a.isQuestion || whereGirls)) return;
+    if (Math.random() > 0.35) return;
+    const bots = pickBotsInRoom(cleanRoom, 2);
+    if (!bots.length) return;
+
+    const b1 = bots[0];
+    const b2 = bots[1] || null;
+    const d1 = b1.dialect || dialectForRoom(cleanRoom).code;
+    const reply1 =
+        greetHit ? choice(pack.replyGreet) :
+            boredHit ? choice(pack.bored) :
+                whereGirls ? (ar ? 'موجودين 😄 بس هاديين شوي.' : 'They’re around 🙂') :
+                    botAwareReply(b1, t, d1, b1.persona || 'friendly');
+    scheduleBotRoomSay(b1, cleanRoom, ensureEndsWithQuestion(d1, ar, reply1), randInt(900, 2600));
+
+    if (b2 && Math.random() < 0.15) {
+        const d2 = b2.dialect || dialectForRoom(cleanRoom).code;
+        const reply2 = greetHit ? choice(pack.greet) : choice(pack.ask);
+        scheduleBotRoomSay(b2, cleanRoom, reply2, randInt(2200, 5200));
+    }
+}
+
+function botBotMiniConversationTick() {
+    const rooms = Array.from(roomUsersList.keys()).filter(Boolean);
+    if (!rooms.length) return;
+    const room = choice(rooms);
+    const bots = pickBotsInRoom(room, 2);
+    if (bots.length < 2) return;
+    if (Math.random() > 0.22) return;
+    if (!canBotTalkInRoom(room, 6)) return;
+    const [b1, b2] = bots;
+    const ar = true;
+    const pack = roomScriptLinePack(ar);
+    const l1 = choice(pack.greet);
+    const l2 = choice(pack.replyGreet);
+    const l3 = choice(pack.ask);
+    scheduleBotRoomSay(b1, room, l1, randInt(400, 1600));
+    scheduleBotRoomSay(b2, room, l2, randInt(1600, 3600));
+    scheduleBotRoomSay(b1, room, l3, randInt(3200, 6400));
 }
 
 function getOrInitBotConv(human, botName) {
@@ -2201,14 +2401,17 @@ function initBots() {
 
     for (let i = 0; i < BOT_COUNT; i++) {
         const gender = Math.random() < 0.45 ? 'female' : 'male';
-        const base = gender === 'female' ? choice(BOT_CREATIVE_FEMALE_BASES) : choice(BOT_CREATIVE_MALE_BASES);
-        const username = buildUniqueBotUsername(base);
+        const useSeed = Math.random() < 0.45;
+        const base = useSeed
+            ? buildUniqueBotUsernameFromSeed(choice(BOT_SEED_RAW_NAMES))
+            : (gender === 'female' ? choice(BOT_CREATIVE_FEMALE_BASES) : choice(BOT_CREATIVE_MALE_BASES));
+        const username = useSeed ? base : buildUniqueBotUsername(base);
         const uKey = username.toLowerCase();
         if (botRegistry.has(uKey)) { i--; continue; }
         const color = gender === 'female' ? '#ff69b4' : '#00d2ff';
         const avatar = svgAvatarDataUrl(firstLetterForAvatar(username), gender === 'female' ? '#db2777' : '#0284c7', gender);
         const persona = pickPersona(gender);
-        const bot = { username, gender, color, avatar, room: '', dialect: 'ar', persona, age: null };
+        const bot = { username, displayName: botDisplayNameFromUsername(username), gender, color, avatar, room: '', dialect: 'ar', persona, age: null };
         botRegistry.set(uKey, bot);
         botJoinRoom(bot, pickRandomBotSpawnRoom(gender));
     }
@@ -2230,6 +2433,11 @@ function initBots() {
             botSayInRoom(bot, msg);
         }
     }, randInt(45_000, 90_000));
+
+    // محادثات بوت-بوت قصيرة (سيناريو + تفاعل خفيف)
+    setInterval(() => {
+        try { botBotMiniConversationTick(); } catch { /* ignore */ }
+    }, randInt(18_000, 28_000));
 }
 
 /** انتظار مطابقة عشوائية (نص فقط في الطور الأول) */
@@ -2661,6 +2869,25 @@ io.on('connection', (socket) => {
         if (data.type === 'text' && (!cleanText || !cleanText.trim())) return;
         if ((data.type === 'image' || data.type === 'audio' || data.type === 'gif') && !data.media) return;
 
+        // mentions: مصفوفة أسماء مستخدمين (اختيارية) — حد أقصى 3
+        let mentions = [];
+        if (Array.isArray(data.mentions)) {
+            mentions = data.mentions
+                .map((x) => sanitizeUsername(String(x || '')))
+                .filter(Boolean)
+                .slice(0, 3);
+        }
+        // لا تذكر نفسك
+        mentions = mentions.filter((u) => u.toLowerCase() !== String(socket.data.username || '').toLowerCase());
+        // تحقّق أنها موجودة داخل الغرفة حالياً
+        if (mentions.length && roomUsersList.has(cleanRoom)) {
+            const roomMap = roomUsersList.get(cleanRoom);
+            const present = new Set(Array.from(roomMap.values()).map((u) => String(u.username || '').toLowerCase()));
+            mentions = mentions.filter((u) => present.has(u.toLowerCase()));
+        } else {
+            mentions = [];
+        }
+
         io.to(cleanRoom).emit('message', {
             username: socket.data.username,
             text:     cleanText,
@@ -2670,8 +2897,14 @@ io.on('connection', (socket) => {
             avatar:   socket.data.avatar || null,
             coverPhoto: socket.data.coverPhoto || null,
             isSystem: false,
+            mentions,
             time:     new Date().toLocaleTimeString()
         });
+
+        // تفاعل بوتات الغرفة مع رسائل البشر (تحية/ملل/سؤال)
+        if ((data.type || 'text') === 'text') {
+            try { maybeTriggerRoomBotsOnHumanMessage({ room: cleanRoom, humanText: cleanText }); } catch { /* ignore */ }
+        }
     });
 
     socket.on('privateMessage', (data) => {

@@ -2354,6 +2354,78 @@ function getCurrentTime() {
     return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+function insertRoomMention(username) {
+    const input = document.getElementById('msgInput');
+    if (!input) return;
+    const u = String(username || '').trim();
+    if (!u) return;
+    // صيغة مرئية داخل النص: @name (استبدل المسافات ب _ لتبقى token واحدة)
+    const token = '@' + u.replace(/\s+/g, '_');
+    const cur = input.value || '';
+    const next = cur && !/\s$/.test(cur) ? (cur + ' ' + token + ' ') : (cur + token + ' ');
+    input.value = next;
+    input.focus();
+    window.__pendingRoomMention = { username: u, token };
+}
+
+function applyMentionHighlightIfNeeded(msgDiv, data) {
+    const me = getSecureItem('nickname') || 'Guest';
+    const mentions = Array.isArray(data?.mentions) ? data.mentions : [];
+    if (mentions.some((u) => String(u || '').toLowerCase() === String(me).toLowerCase())) {
+        msgDiv.classList.add('mention-hit');
+    }
+}
+
+function renderTextWithMentionToken(text, token) {
+    // إبراز token فقط (بدون innerHTML)
+    const s = String(text || '');
+    const t = String(token || '');
+    if (!t || s.indexOf(t) === -1) {
+        // fallback: إبراز أي @word بسيطة
+        const m = s.match(/@\S+/g);
+        if (!m) {
+            const span = document.createElement('span');
+            span.textContent = sanitizeInput(s);
+            return span;
+        }
+        const frag = document.createDocumentFragment();
+        let rest = s;
+        while (true) {
+            const mm = rest.match(/@\S+/);
+            if (!mm) break;
+            const idx = rest.indexOf(mm[0]);
+            const before = rest.slice(0, idx);
+            if (before) frag.appendChild(document.createTextNode(sanitizeInput(before)));
+            const tag = document.createElement('span');
+            tag.className = 'mention-token';
+            tag.textContent = sanitizeInput(mm[0]);
+            frag.appendChild(tag);
+            rest = rest.slice(idx + mm[0].length);
+        }
+        if (rest) frag.appendChild(document.createTextNode(sanitizeInput(rest)));
+        const wrap = document.createElement('span');
+        wrap.appendChild(frag);
+        return wrap;
+    }
+    const frag = document.createDocumentFragment();
+    const parts = s.split(t);
+    parts.forEach((p, idx) => {
+        if (p) {
+            const node = document.createTextNode(sanitizeInput(p));
+            frag.appendChild(node);
+        }
+        if (idx !== parts.length - 1) {
+            const m = document.createElement('span');
+            m.className = 'mention-token';
+            m.textContent = sanitizeInput(t);
+            frag.appendChild(m);
+        }
+    });
+    const wrap = document.createElement('span');
+    wrap.appendChild(frag);
+    return wrap;
+}
+
 function emitTyping(isTyping) {
     if (socket && currentRoom) {
         socket.emit('typing', {
@@ -2382,14 +2454,18 @@ function sendMessage() {
     message = sanitizeInput(message);
     if (message === '') return;
     if (socket) {
+        const pendingMention = window.__pendingRoomMention || null;
+        const mentions = pendingMention && pendingMention.username ? [pendingMention.username] : [];
         socket.emit('chatMessage', {
             room: currentRoom,
             username: getSecureItem('nickname') || 'Guest',
             text: message,
             type: 'text',
+            mentions,
             color: userColor,
             time: getCurrentTime()
         });
+        window.__pendingRoomMention = null;
         input.value = '';
         emitTyping(false);
         input.focus();
@@ -3541,6 +3617,7 @@ if (socket) {
         const div = document.createElement('div');
         const currentNick = getSecureItem('nickname') || 'Guest';
         div.className = 'msg ' + (data.username === currentNick ? 'my-msg' : '');
+        applyMentionHighlightIfNeeded(div, data);
 
         if (data.isSystem) {
             div.classList.add('system-msg');
@@ -3572,6 +3649,14 @@ if (socket) {
             userTag.style.color = data.color;
             userTag.textContent = sanitizeInput(data.username);
             head.appendChild(userTag);
+            if (data.username !== currentNick) {
+                userTag.style.cursor = 'pointer';
+                userTag.title = currentLang() === 'ar' ? 'إشارة لهذا المستخدم' : 'Mention this user';
+                userTag.addEventListener('click', (evt) => {
+                    evt.stopPropagation();
+                    insertRoomMention(data.username);
+                });
+            }
             if (!own) {
                 const actions = document.createElement('span');
                 actions.className = 'msg-actions';
@@ -3596,9 +3681,9 @@ if (socket) {
             userTag.appendChild(timeSpan);
 
             if (data.type === 'text') {
-                const textSpan = document.createElement('span');
-                textSpan.textContent = sanitizeInput(data.text);
-                div.appendChild(textSpan);
+                const token = window.__pendingRoomMention?.token || '';
+                const node = renderTextWithMentionToken(data.text, token);
+                div.appendChild(node);
             } else if (data.type === 'image') {
                 const img = document.createElement('img');
                 img.src = data.media;
