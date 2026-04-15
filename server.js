@@ -1419,8 +1419,20 @@ function pickGeminiBotRoom(gender) {
     return Math.random() < 0.5 ? 'General' : 'Tech';
 }
 
+/** نماذج متوافقة مع `v1beta` — تجنّب gemini-1.5-pro (غير متاح لهذا المسار في السجلات) */
+const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash';
+
 function getGeminiModelFromEnv() {
-    return String(process.env.GEMINI_MODEL || 'gemini-1.5-flash').trim() || 'gemini-1.5-flash';
+    let m = String(process.env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL).trim() || GEMINI_DEFAULT_MODEL;
+    const low = m.toLowerCase();
+    if (low === 'gemini-1.5-pro' || low.includes('gemini-1.5-pro')) {
+        console.warn(
+            '[Gemini] model remap: gemini-1.5-pro غير مدعوم على v1beta لهذا المشروع — استخدام',
+            GEMINI_DEFAULT_MODEL
+        );
+        m = GEMINI_DEFAULT_MODEL;
+    }
+    return m;
 }
 
 function getGeminiTimeoutMsFromEnv() {
@@ -1518,11 +1530,11 @@ async function generateGeminiResponse({ bot, userText, dialect, tone, history, r
 
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), timeoutMs);
-    const url =
+    const endpoint =
         `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent` +
         `?key=${encodeURIComponent(apiKey)}`;
     try {
-        const r = await fetch(url, {
+        const r = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             signal: controller.signal,
