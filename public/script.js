@@ -638,6 +638,7 @@ const translations = {
         chooseRoom: '🌍 اختر غرفة للدردشة',
         welcome: 'مرحباً بعودتك، ',
         general: 'عام',
+        islamiyat: 'إسلاميات',
         morocco: 'المغرب',
         saudi: 'السعودية',
         egypt: 'مصر',
@@ -824,6 +825,7 @@ const translations = {
         chooseRoom: '🌍 Choose a Room',
         welcome: 'Welcome back, ',
         general: 'General',
+        islamiyat: 'Islamiyat',
         morocco: 'Morocco',
         saudi: 'Saudi Arabia',
         egypt: 'Egypt',
@@ -2152,10 +2154,23 @@ function initRoomCards() {
     document.querySelectorAll('.room-card').forEach((card) => {
         const fg = card.querySelector('.flag-bg');
         if (!fg) return;
+        const roomName = String(card.getAttribute('data-room') || '').toLowerCase();
         if (card.getAttribute('data-room-kind') === 'girls') {
             fg.innerHTML = '';
             fg.classList.remove('flag-composite');
             fg.classList.add('flag-bg--girls-art');
+            return;
+        }
+        if (roomName === 'islamiyat') {
+            fg.innerHTML = '';
+            fg.classList.remove('flag-composite', 'flag-bubbles');
+            fg.classList.add('flag-bg--islamiyat');
+            const img = document.createElement('img');
+            img.src = '/images/islamiyat-room-icon.png';
+            img.alt = 'Islamiyat room icon';
+            img.loading = 'lazy';
+            img.className = 'islamiyat-room-icon';
+            fg.appendChild(img);
             return;
         }
         const region = card.getAttribute('data-region');
