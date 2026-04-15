@@ -284,6 +284,37 @@ body.rooms-page .room-card--girls-only:hover {
     border-color: rgba(219, 39, 119, 0.55);
     box-shadow: 0 8px 28px rgba(236, 72, 153, 0.22);
 }
+
+/* غرفة عام — دردشة عامة */
+body.rooms-page .room-card--general {
+    background: linear-gradient(145deg, rgba(14, 165, 233, 0.18), rgba(59, 130, 246, 0.1));
+    border-color: rgba(56, 189, 248, 0.45);
+    box-shadow: 0 4px 20px rgba(14, 165, 233, 0.12);
+}
+body.rooms-page.light .room-card--general {
+    background: linear-gradient(145deg, #eff6ff, #dbeafe);
+    border-color: rgba(59, 130, 246, 0.35);
+}
+body.rooms-page .room-card--general:hover {
+    border-color: rgba(14, 165, 233, 0.55);
+    box-shadow: 0 8px 28px rgba(59, 130, 246, 0.2);
+}
+body.rooms-page .flag-bg--general {
+    background: linear-gradient(135deg, #38bdf8 0%, #0ea5e9 45%, #0369a1 100%);
+    position: relative;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+body.rooms-page .flag-bg--general::after {
+    content: '💬';
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: clamp(26px, 5.5vw, 34px);
+    filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.2));
+}
+
 body.rooms-page .flag-bg--girls-art {
     background: linear-gradient(135deg, #fbcfe8 0%, #f472b6 45%, #db2777 100%);
     position: relative;

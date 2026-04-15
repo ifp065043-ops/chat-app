@@ -501,9 +501,9 @@ function sanitizeText(text) {
 
 function sanitizeUsername(username) {
     if (!username) return '';
-    let cleaned = username.replace(/[^a-zA-Z0-9\u0600-\u06FF_]/g, '');
-    cleaned = cleaned.trim();
-    if (cleaned.length > 20) cleaned = cleaned.substring(0, 20);
+    let cleaned = username.replace(/[^a-zA-Z0-9\u0600-\u06FF_\s-]/g, '');
+    cleaned = cleaned.replace(/\s+/g, ' ').trim();
+    if (cleaned.length > 20) cleaned = cleaned.substring(0, 20).trim();
     return cleaned;
 }
 
@@ -1405,18 +1405,21 @@ function botToneForRoom(room) {
     return 'normal';
 }
 
-/** Gemini مفعّل فقط في غرف General و Tech (حسب اسم الغرفة) */
+/** Gemini فقط في غرفة «General» (العام) */
 function roomSupportsGemini(roomName) {
     const r = String(roomName || '').trim().toLowerCase();
-    if (!r) return false;
-    if (/\bgeneral\b/.test(r)) return true;
-    if (/\btech\b|\btechnical\b|تقنية|مبرمج|programming|coding/.test(r)) return true;
-    return false;
+    return /\bgeneral\b/.test(r);
 }
 
-function pickGeminiBotRoom(gender) {
-    if (gender === 'female' && Math.random() < 0.1) return 'Girls Only';
-    return Math.random() < 0.5 ? 'General' : 'Tech';
+const BOT_SPAWN_ROOMS = [
+    'General',
+    'Morocco', 'Saudi Arabia', 'Egypt', 'Palestine', 'Lebanon', 'Algeria', 'Tunisia', 'Bahrain', 'Qatar', 'UAE', 'Syria',
+    'Gulf Region', 'North Africa', 'Levant', 'Girls Only'
+];
+
+function pickRandomBotSpawnRoom(gender) {
+    const eligible = BOT_SPAWN_ROOMS.filter((r) => r !== 'Girls Only' || gender === 'female');
+    return choice(eligible);
 }
 
 /** نماذج متوافقة مع `v1beta` — تجنّب gemini-1.5-pro (غير متاح لهذا المسار في السجلات) */
@@ -1440,6 +1443,55 @@ function getGeminiTimeoutMsFromEnv() {
         15_000,
         Math.max(2_000, parseInt(String(process.env.GEMINI_TIMEOUT_MS || '8000'), 10) || 8000)
     );
+}
+
+/** حروف الاسم الظاهر للمستخدم بدون أرقام — لا تُعرَض معرّف الحساب كاملاً */
+function displayNameHintForPeer(rawHandle) {
+    const s = String(rawHandle || '').trim();
+    if (!s) return '';
+    const noDigits = s.replace(/\d+/g, '').replace(/[_-]+/g, ' ').trim();
+    if (!noDigits) return '';
+    if (hasArabic(noDigits)) {
+        return `اسم المستخدم الظاهر (بدون أرقام) قد يكون: «${noDigits.slice(0, 28)}». لا تنسخي/لا تنسخ معرّف الحساب مع الأرقام (مثل farah758). خاطبيه بلطف بالعربية.`;
+    }
+    const letters = noDigits.replace(/[^a-zA-Z\s]/g, '').trim();
+    if (!letters) return '';
+    return `معرّف المستخدم لاتيني (حروف فقط بدون أرقام): «${letters.slice(0, 24)}». لا تذكري/تذكر الاسم مع الأرقام؛ ناديه بلطف وبشكل عربي طبيعي (مثلاً تقريباً «فرح» إن كان farah758).`;
+}
+
+function buildGeminiSystemPrompt({ botName, gender, toneLine, regionHint, roomTag, peerHint }) {
+    const isFemale = gender === 'female';
+    const who = isFemale ? 'فتاة عربية طبيعية' : 'شاب عربي طبيعي';
+    const t1 = isFemale ? 'ردّي' : 'ردّ';
+    const t2 = isFemale ? 'اسألي' : 'اسأل';
+    const t3 = isFemale ? 'تذكّري' : 'تذكّر';
+    const t4 = isFemale ? 'قدّمي' : 'تقدّم';
+    const t5 = isFemale ? 'استخدمي' : 'استخدم';
+    const t6 = isFemale ? 'لا تردّي' : 'لا تردّ';
+    const t7 = isFemale ? 'لا تكتبي' : 'لا تكتب';
+    const tWait = isFemale ? 'انتظري سؤاله' : 'انتظر سؤاله';
+    return [
+        `أنت ${botName}، ${who} في الدردشة (اسمك الظاهر هو ${botName} — لا تقل إنك بوت أو مساعد ذكي).`,
+        `لهجتك تقريباً: ${regionHint}. أنت في غرفة: «${roomTag}».`,
+        toneLine,
+        '',
+        '**أسلوبك:**',
+        `- ${t1} على قدر السؤال (سؤال قصير ← رد قصير، سؤال أطول ← رد مفيد قصير).`,
+        `- دائماً ${t2} المستخدم سؤالاً قصيراً في نهاية ردك (مثل «وأنت؟»، «شو رأيك؟»، «من وين أنت؟»).`,
+        `- ${t3} اسم المستخدم إذا ذكره؛ ${peerHint ? `(${peerHint})` : 'إن وُجد في الرسالة استخدمه بلطف.'}`,
+        `- لا ${t4} نفسك أولاً بطريقة مزعجة أو طويلة؛ ${tWait}.`,
+        `- لا ${t4} نفسك كبوت أو مساعد ذكي.`,
+        `- ${t5} تعابير بسيطة مثل «هلا»، «أهلاً»، «والله» عند الحاجة.`,
+        `- ${t6} بكلمة واحدة فقط (مثل «أ» أو «أنا» وحدها).`,
+        `- ${t7} فقرة طويلة: جملتان كحد أقصى، بلا فقرات.`,
+        `- إذا سألك عن اسمك: أعطِ اسماً عربياً طبيعياً مناسباً لشخصيتك؛ لا تنسخي/لا تنسخ معرّف الحساب الحرفي للمستخدم (مثل farah758).`,
+        '',
+        '**أمثلة على ردود طبيعية (للطول والأسلوب — عدّل المذكر/المؤنث حسب جنسك):**',
+        'س: "اسمي أحمد، ما اسمك؟" → ج: "أنا مريم. تشرفت يا أحمد، كيف حالك؟ شو أخبارك؟"',
+        'س: "تحبين السفر؟" → ج: "آه والله بحب السفر. رحت تركيا مرة وكانت حلوة. وأنت، بتحب تسافر؟"',
+        'س: "من وين انتي؟" → ج: "أنا من الدار البيضاء. وأنت من فين؟"',
+        'س: "كيف الحال؟" → ج: "الحمد لله بخير، وأنت شو أخبارك؟"'
+    ].join('\n');
 }
 
 function botTonePromptAr(tone) {
@@ -1469,11 +1521,12 @@ function canUseGeminiRate(key = 'global') {
  * استدعاء Gemini — يقرأ GEMINI_API_KEY من process.env فقط عند كل محاولة.
  * يسجّل كل محاولة وأي فشل في Logs (Render).
  */
-async function generateGeminiResponse({ bot, userText, dialect, tone, history, room }) {
+async function generateGeminiResponse({ bot, userText, dialect, tone, history, room, peerUsername }) {
     const apiKey = String(process.env.GEMINI_API_KEY || '').trim();
     const model = getGeminiModelFromEnv();
     const timeoutMs = getGeminiTimeoutMsFromEnv();
     const roomTag = String(room || '').trim();
+    const peerRaw = String(peerUsername || '').trim();
 
     console.log('[Gemini] generateGeminiResponse: attempt', {
         room: roomTag,
@@ -1482,6 +1535,7 @@ async function generateGeminiResponse({ bot, userText, dialect, tone, history, r
         hasKeyFromEnv: !!apiKey,
         keyLength: apiKey.length,
         bot: bot?.username,
+        peer: peerRaw,
         dialect,
         tone
     });
@@ -1497,8 +1551,8 @@ async function generateGeminiResponse({ bot, userText, dialect, tone, history, r
     }
 
     const d = String(dialect || bot?.dialect || 'ar');
-    const safeTone = botTonePromptAr(tone || 'normal');
-    const botName = String(bot?.username || 'Bot');
+    const toneLine = botTonePromptAr(tone || 'normal');
+    const botName = String(bot?.username || 'صديق');
     const gender = bot?.gender === 'female' ? 'female' : 'male';
     const regionHint =
         d === 'ma' ? 'مغربي'
@@ -1506,27 +1560,27 @@ async function generateGeminiResponse({ bot, userText, dialect, tone, history, r
                 : d === 'eg' ? 'مصري'
                     : d === 'gulf' ? 'خليجي'
                         : 'عربي';
+    const peerHint = displayNameHintForPeer(peerRaw);
+    const systemPrompt = buildGeminiSystemPrompt({
+        botName,
+        gender,
+        toneLine,
+        regionHint,
+        roomTag,
+        peerHint
+    });
     const compactHistory = (Array.isArray(history) ? history : [])
         .slice(-10)
         .map((m) => `${m.role === 'bot' ? 'bot' : 'user'}: ${String(m.text || '').slice(0, 180)}`)
         .join('\n');
-    const prompt = [
-        `أنت بوت دردشة اسمه "${botName}"، جنسك ${gender}, ولهجتك ${regionHint}.`,
-        `أنت في غرفة اسمها "${roomTag}" — التزم بنبرة الغرفة.`,
-        safeTone,
-        'القواعد:',
-        '- رد قصير (8-28 كلمة غالباً).',
-        '- لا فصحى ثقيلة. لا إسهاب.',
-        '- لا تدّعي قدرات تقنية/حقيقية غير موجودة.',
-        '- إذا سُئلت من وين أنت: اذكر منطقتك/لهجتك باختصار.',
-        '- إذا الرسالة غير واضحة: اسأل سؤال متابعة قصير جداً.',
-        '',
+    const userTurn = [
+        peerRaw ? `معرّف المحادث (للتلميح فقط، لا تنسخه رقماً): ${peerRaw.slice(0, 40)}` : '',
         'آخر سياق (الأحدث في النهاية):',
         compactHistory || '(لا يوجد)',
         '',
-        `رسالة المستخدم الحالية: ${String(userText || '').slice(0, 300)}`,
-        'اكتب الرد فقط بدون شرح.'
-    ].join('\n');
+        `رسالة المستخدم الحالية: ${String(userText || '').slice(0, 320)}`,
+        'اكتب ردك فقط (جملتان كحد أقصى، وانتهِ بسؤال قصير للمتابعة).'
+    ].filter(Boolean).join('\n');
 
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), timeoutMs);
@@ -1539,12 +1593,13 @@ async function generateGeminiResponse({ bot, userText, dialect, tone, history, r
             headers: { 'Content-Type': 'application/json' },
             signal: controller.signal,
             body: JSON.stringify({
+                systemInstruction: { parts: [{ text: systemPrompt }] },
                 generationConfig: {
-                    temperature: 0.85,
+                    temperature: 0.8,
                     topP: 0.9,
-                    maxOutputTokens: 90
+                    maxOutputTokens: 120
                 },
-                contents: [{ role: 'user', parts: [{ text: prompt }] }]
+                contents: [{ role: 'user', parts: [{ text: userTurn }] }]
             })
         });
         const rawText = await r.text().catch(() => '');
@@ -1574,7 +1629,7 @@ async function generateGeminiResponse({ bot, userText, dialect, tone, history, r
             return { ok: false, text: '', reason: 'api_error', detail: JSON.stringify(j.error).slice(0, 400) };
         }
         const out = j?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        const textOut = clampText(String(out || '').replace(/\s+/g, ' ').trim(), 140);
+        const textOut = clampText(String(out || '').replace(/\s+/g, ' ').trim(), 200);
         if (!textOut) {
             console.warn('[Gemini] generateGeminiResponse: empty model output', {
                 promptFeedback: j?.promptFeedback,
@@ -1746,7 +1801,7 @@ function buildHistoryForModel(convState) {
     }));
 }
 
-async function smartBotReply({ bot, userText, dialect, personaId, room, convState }) {
+async function smartBotReply({ bot, userText, dialect, personaId, room, convState, peerUsername }) {
     const local = botAwareReply(bot, userText, dialect, personaId);
     const effectiveRoom = String(bot?.room || room || '').trim();
     if (!roomSupportsGemini(effectiveRoom)) {
@@ -1766,7 +1821,8 @@ async function smartBotReply({ bot, userText, dialect, personaId, room, convStat
         dialect,
         tone,
         history,
-        room: effectiveRoom
+        room: effectiveRoom,
+        peerUsername
     });
     if (!res.ok || !res.text) {
         console.warn('[Gemini] smartBotReply: fallback local', {
@@ -1779,7 +1835,7 @@ async function smartBotReply({ bot, userText, dialect, personaId, room, convStat
     }
     const ar = hasArabic(userText) || hasArabic(res.text);
     const polished = ar ? casualizeArabic(dialect || bot.dialect || 'ar', res.text) : res.text;
-    return personaWrap(personaId, ar, clampText(polished, 110));
+    return personaWrap(personaId, ar, clampText(polished, 200));
 }
 
 function dialectForRandomRegion(region) {
@@ -1804,7 +1860,7 @@ function botNameTaken(username) {
 }
 
 function buildUniqueBotUsername(base, maxLen = 20) {
-    const stem = sanitizeUsername(base).slice(0, Math.max(3, maxLen - 5)) || 'User';
+    const stem = sanitizeUsername(base).slice(0, Math.max(3, maxLen - 5)) || 'صديق';
     for (let i = 0; i < 80; i++) {
         const tag = randInt(100, 9999);
         const candidate = `${stem}${tag}`.slice(0, maxLen);
@@ -1813,18 +1869,38 @@ function buildUniqueBotUsername(base, maxLen = 20) {
     return `${stem}${crypto.randomBytes(2).toString('hex')}`.slice(0, maxLen);
 }
 
+function firstLetterForAvatar(name) {
+    const s = String(name || '').trim();
+    const m = s.match(/[\u0600-\u06FFa-zA-Z]/);
+    return m ? m[0] : '?';
+}
+
+const BOT_CREATIVE_FEMALE_BASES = [
+    'زهرة الحب', 'الحمامة البيضاء', 'نسيم الصباح', 'قمر الدار', 'روح الورد', 'دموع فرح', 'أميرة الصمت', 'حلم الربيع',
+    'وردة الشمال', 'ليلى الضباب', 'سارة الموج', 'ندى الظهيرة', 'فراشة الليل', 'عصفورة البحر', 'رند الغيم', 'هند الإحساس',
+    'تولين الأمل', 'مرام القمر', 'دانة الضحى', 'سلمى الود', 'رياحين', 'غيمة أمل', 'بسمة خفيفة', 'روض الأماني',
+    'أغصان زيتون', 'ربيع هادئ', 'روح الطيبة', 'شمس الدجى', 'خطوة نور', 'أحلام بسيطة', 'نبض المدينة', 'همس الليل',
+    'عروس البحر', 'لؤلؤة الصباح', 'حكاية شارع', 'ورد جوري', 'سحابة وردية', 'أميرة الضحكة', 'دفء الشتاء', 'قصة عادية'
+];
+
+const BOT_CREATIVE_MALE_BASES = [
+    'ابن البلد', 'صقر الصحراء', 'فارس الليل', 'نور الدرب', 'كنف الغيم', 'سهم الوفاء', 'رامي الدرب', 'حكيم البساطة',
+    'شموخ الريف', 'برق الشمال', 'سند الروح', 'قلب الصدف', 'طير الأماكن', 'وسام الدرب', 'عز الدين', 'ساري الندى',
+    'مجد الأفق', 'زيد السكون', 'تميم البحر', 'فهد الموج', 'ليث الصمت', 'روح السفر', 'رفيق الدرب', 'سفير الابتسامة',
+    'ابن السماء', 'حارس الأمل', 'صوت المطر', 'ذاكرة الشارع', 'فنجان صباح', 'طيف المدينة', 'سهم النجاح', 'نجم الليل',
+    'راوي الحكاية', 'صاحب الخاطر', 'غيم ماطر', 'بحر هادئ', 'فارس الكلام', 'سند للغريب', 'خيط دفء', 'ليث الفجر'
+];
+
 function initRandomBots() {
     if (randomBotRegistry.length) return;
-    const maleNames = ['Omar','Yousef','Khaled','Hassan','Sami','Nader','Tariq','Adel','Fares','Hamza','Ziad','Karim','Bilal','Anas','Badr','Rami','Majd','Iyad','Saad','Hani'];
-    const femaleNames = ['Sara','Lina','Nour','Huda','Maya','Aya','Reem','Rana','Farah','Jana','Mariam','Salma','Rita','Dina','Yara','Laila','Hiba','Ruba','Sahar','Noha'];
     const dialects = ['ma', 'sy', 'eg', 'gulf', 'ar'];
     while (randomBotRegistry.length < 50) {
         const gender = Math.random() < 0.5 ? 'female' : 'male';
-        const base = gender === 'female' ? choice(femaleNames) : choice(maleNames);
+        const base = gender === 'female' ? choice(BOT_CREATIVE_FEMALE_BASES) : choice(BOT_CREATIVE_MALE_BASES);
         const username = buildUniqueBotUsername(base);
         const dialect = choice(dialects);
         const color = gender === 'female' ? '#ff69b4' : '#00d2ff';
-        const avatar = svgAvatarDataUrl(base[0], gender === 'female' ? '#db2777' : '#0284c7', gender);
+        const avatar = svgAvatarDataUrl(firstLetterForAvatar(username), gender === 'female' ? '#db2777' : '#0284c7', gender);
         const persona = pickPersona(gender);
         randomBotRegistry.push({ username, gender, dialect, color, avatar, persona, room: 'General' });
     }
@@ -1913,7 +1989,8 @@ function scheduleRandomBotReply(socket, userText) {
             dialect,
             personaId: st.bot.persona || 'friendly',
             room: st.bot.room || 'General',
-            convState: st
+            convState: st,
+            peerUsername: socket.data?.username || ''
         });
         st.botMsgs++;
         st.history.push({ from: 'bot', text: reply, at: Date.now() });
@@ -2089,22 +2166,6 @@ function scheduleBotPrivateReply({ fromSocket, bot, toUsername, userText }) {
     }
 
     const humanRoomDialect = dialectForRoom(fromSocket?.data?.room || '').code;
-    // أول رسالة: عرّف البوت نفسه بشكل طبيعي حسب غرفة المستخدم
-    const shouldIntro = first && Math.random() < 0.75;
-    const identity =
-        shouldIntro && hasArabic(userText)
-            ? (() => {
-                const d = humanRoomDialect || bot.dialect || 'ar';
-                const who =
-                    d === 'ma' ? 'مغربي' :
-                        d === 'sy' ? 'سوري' :
-                            d === 'eg' ? 'مصري' :
-                                d === 'gulf' ? 'خليجي' :
-                                    'من المنطقة';
-                const verb = bot.gender === 'female' ? 'أنا' : 'أنا';
-                return `${verb} ${who} 🙂`;
-            })()
-            : '';
     setTimeout(async () => {
         const replyCore = await smartBotReply({
             bot,
@@ -2112,9 +2173,10 @@ function scheduleBotPrivateReply({ fromSocket, bot, toUsername, userText }) {
             dialect: humanRoomDialect || bot.dialect,
             personaId: bot.persona || 'friendly',
             room: bot.room || fromSocket?.data?.room || '',
-            convState: state
+            convState: state,
+            peerUsername: toUsername
         });
-        const reply = identity ? `${identity}\n${replyCore}` : replyCore;
+        const reply = replyCore;
         state.botMsgs++;
         state.history.push({ from: 'bot', text: reply, at: Date.now() });
         if (state.history.length > 12) state.history.splice(0, state.history.length - 12);
@@ -2136,21 +2198,19 @@ function scheduleBotPrivateReply({ fromSocket, bot, toUsername, userText }) {
 
 function initBots() {
     const BOT_COUNT = Math.min(200, Math.max(10, parseInt(String(process.env.BOT_COUNT || '80'), 10) || 80));
-    const maleNames = ['Omar','Yousef','Khaled','Hassan','Sami','Nader','Tariq','Adel','Fares','Hamza','Ziad','Karim','Bilal','Anas','Badr'];
-    const femaleNames = ['Sara','Lina','Nour','Huda','Maya','Aya','Reem','Rana','Farah','Jana','Mariam','Salma','Rita','Dina','Yara'];
 
     for (let i = 0; i < BOT_COUNT; i++) {
         const gender = Math.random() < 0.45 ? 'female' : 'male';
-        const base = gender === 'female' ? choice(femaleNames) : choice(maleNames);
+        const base = gender === 'female' ? choice(BOT_CREATIVE_FEMALE_BASES) : choice(BOT_CREATIVE_MALE_BASES);
         const username = buildUniqueBotUsername(base);
         const uKey = username.toLowerCase();
         if (botRegistry.has(uKey)) { i--; continue; }
         const color = gender === 'female' ? '#ff69b4' : '#00d2ff';
-        const avatar = svgAvatarDataUrl(base[0], gender === 'female' ? '#db2777' : '#0284c7', gender);
+        const avatar = svgAvatarDataUrl(firstLetterForAvatar(username), gender === 'female' ? '#db2777' : '#0284c7', gender);
         const persona = pickPersona(gender);
         const bot = { username, gender, color, avatar, room: '', dialect: 'ar', persona, age: null };
         botRegistry.set(uKey, bot);
-        botJoinRoom(bot, pickGeminiBotRoom(gender));
+        botJoinRoom(bot, pickRandomBotSpawnRoom(gender));
     }
 
     // تنقّل دوري ورسائل خفيفة
@@ -2162,7 +2222,7 @@ function initBots() {
         const sayChance = 0.35;
 
         if (Math.random() < moveChance) {
-            botJoinRoom(bot, pickGeminiBotRoom(bot.gender));
+            botJoinRoom(bot, pickRandomBotSpawnRoom(bot.gender));
         } else if (Math.random() < sayChance) {
             const d = bot.dialect || dialectForRoom(bot.room).code;
             const pack = DIALECT_PACKS[d] || DIALECT_PACKS.ar;
