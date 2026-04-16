@@ -2423,6 +2423,7 @@ body.rooms-page.light .random-chat-view__header { background: #fff; border-botto
 .random-chat-view__title { flex: 1; margin: 0; font-size: 17px; font-weight: 700; text-align: center; color: var(--text); }
 .random-skip-btn { padding: 8px 14px; border-radius: 10px; border: 1px solid rgba(248, 113, 113, 0.5); background: rgba(248, 113, 113, 0.12); color: #fca5a5; font-size: 13px; font-weight: 700; cursor: pointer; }
 .random-chat-messages { flex: 1; overflow-y: auto; padding: 16px 14px; display: flex; flex-direction: column; gap: 10px; min-height: 200px; }
+.random-typing-info { padding: 0 14px; font-size: 12px; font-style: italic; color: #00d2ff; min-height: 16px; }
 .random-msg-row { display: flex; width: 100%; }
 .random-msg-row--peer { justify-content: flex-start; }
 .random-msg-row--mine { justify-content: flex-end; }

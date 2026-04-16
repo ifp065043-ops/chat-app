@@ -1558,7 +1558,7 @@ function canUseGeminiRate(key = 'global') {
  * استدعاء Gemini — يقرأ GEMINI_API_KEY من process.env فقط عند كل محاولة.
  * يسجّل كل محاولة وأي فشل في Logs (Render).
  */
-async function generateGeminiResponse({ bot, userText, dialect, tone, history, room, peerUsername, personaId, rateKey }) {
+async function generateGeminiResponse({ bot, userText, dialect, tone, history, room, peerUsername, personaId, rateKey, shouldAskQuestion = true }) {
     const apiKey = String(process.env.GEMINI_API_KEY || '').trim();
     const model = getGeminiModelFromEnv();
     const timeoutMs = getGeminiTimeoutMsFromEnv();
@@ -1599,11 +1599,21 @@ async function generateGeminiResponse({ bot, userText, dialect, tone, history, r
                         : 'عربي';
     const peerHint = displayNameHintForPeer(peerRaw);
     const personaText =
-        personaId === 'shy' ? 'شخصيتك خجولة شوي: مختصر/ة لكن مهذب/ة وهادئ/ة.' :
-            personaId === 'serious' ? 'شخصيتك جاد/ة ومتزن/ة: رد مباشر وواضح بدون مبالغة.' :
-                personaId === 'sarcastic' ? 'شخصيتك فيها مزحة خفيفة أحياناً بدون تجريح.' :
-                    personaId === 'flirty' ? 'شخصيتك ودودة ومرحة، بدون تجاوز أو محتوى مخالف.' :
-                        'شخصيتك ودودة وطبيعية.';
+        personaId === 'shy'
+            ? 'شخصيتك خجولة شوي: مختصر/ة وهادئ/ة، بصياغة مهذبة وتردد بسيط.'
+            : personaId === 'cold'
+                ? 'شخصيتك باردة/مباشرة: ردود قصيرة وواضحة بدون مبالغة أو كثرة إطراء.'
+                : personaId === 'funny'
+                    ? 'شخصيتك مرِحة: مزحة خفيفة أحياناً بدون تجريح وبشكل لطيف.'
+                    : personaId === 'curious'
+                        ? 'شخصيتك فضولية: تحب تسأل متابعة قصيرة لتفهم أكثر.'
+                        : 'شخصيتك ودودة وطبيعية: أسلوب لطيف وداعم.';
+
+    const personaMaxChars = BOT_PERSONAS[personaId]?.maxChars || 190;
+    const maxOutputTokens =
+        personaMaxChars <= 140 ? 90 :
+            personaMaxChars <= 170 ? 110 :
+                130;
     const systemPrompt = buildGeminiSystemPrompt({
         botName,
         gender,
@@ -1623,7 +1633,9 @@ async function generateGeminiResponse({ bot, userText, dialect, tone, history, r
         compactHistory || '(لا يوجد)',
         '',
         `رسالة المستخدم الحالية: ${String(userText || '').slice(0, 320)}`,
-        'اكتب ردك فقط (جملتان كحد أقصى، وانتهِ بسؤال قصير للمتابعة).'
+        shouldAskQuestion
+            ? 'اكتب ردك فقط (جملتان كحد أقصى، وانتهِ بسؤال قصير للمتابعة).'
+            : 'اكتب ردك فقط (جملتان كحد أقصى، ولا تجعل الرد كله سؤالاً). إذا انتهيت بسؤال فخليه قصيراً جداً.'
     ].filter(Boolean).join('\n');
 
     const controller = new AbortController();
@@ -1641,7 +1653,7 @@ async function generateGeminiResponse({ bot, userText, dialect, tone, history, r
                 generationConfig: {
                     temperature: 0.8,
                     topP: 0.9,
-                    maxOutputTokens: 150
+                    maxOutputTokens: maxOutputTokens
                 },
                 contents: [{ role: 'user', parts: [{ text: userTurn }] }]
             })
@@ -1673,7 +1685,7 @@ async function generateGeminiResponse({ bot, userText, dialect, tone, history, r
             return { ok: false, text: '', reason: 'api_error', detail: JSON.stringify(j.error).slice(0, 400) };
         }
         const out = j?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        const textOut = clampTextWordBoundary(String(out || '').replace(/\s+/g, ' ').trim(), 200);
+        const textOut = clampTextWordBoundary(String(out || '').replace(/\s+/g, ' ').trim(), personaMaxChars);
         if (!textOut) {
             console.warn('[Gemini] generateGeminiResponse: empty model output', {
                 promptFeedback: j?.promptFeedback,
@@ -1766,18 +1778,29 @@ function casualizeArabic(dialect, text) {
 }
 
 const BOT_PERSONAS = {
-    friendly: { emojiP: 0.35, shortP: 0.55, skipInstantP: 0.14, skipAfterP: 0.26, afterMin: 4, afterMax: 8 },
-    shy:      { emojiP: 0.22, shortP: 0.75, skipInstantP: 0.22, skipAfterP: 0.30, afterMin: 3, afterMax: 6 },
-    serious:  { emojiP: 0.10, shortP: 0.45, skipInstantP: 0.10, skipAfterP: 0.20, afterMin: 5, afterMax: 9 },
-    sarcastic:{ emojiP: 0.18, shortP: 0.55, skipInstantP: 0.20, skipAfterP: 0.22, afterMin: 4, afterMax: 7 },
-    flirty:   { emojiP: 0.45, shortP: 0.50, skipInstantP: 0.12, skipAfterP: 0.18, afterMin: 6, afterMax: 10 }
+    // personality ids (simple + tunable)
+    friendly: { emojiP: 0.35, shortP: 0.55, skipInstantP: 0.14, skipAfterP: 0.26, afterMin: 4, afterMax: 8, questionRate: 0.55, maxChars: 190, energy: 'medium' },
+    shy:      { emojiP: 0.22, shortP: 0.75, skipInstantP: 0.22, skipAfterP: 0.30, afterMin: 3, afterMax: 6, questionRate: 0.40, maxChars: 160, energy: 'low' },
+    cold:     { emojiP: 0.10, shortP: 0.45, skipInstantP: 0.10, skipAfterP: 0.20, afterMin: 5, afterMax: 9, questionRate: 0.30, maxChars: 130, energy: 'low' },
+    funny:    { emojiP: 0.18, shortP: 0.55, skipInstantP: 0.20, skipAfterP: 0.22, afterMin: 4, afterMax: 7, questionRate: 0.60, maxChars: 160, energy: 'high' },
+    curious:  { emojiP: 0.28, shortP: 0.45, skipInstantP: 0.12, skipAfterP: 0.22, afterMin: 4, afterMax: 9, questionRate: 0.65, maxChars: 175, energy: 'medium-high' }
+};
+
+// --- Bot "human timing" presets (random chat only) ---
+// Keep it simple: probabilities + delay ranges below.
+const BOT_TIMING_PRESETS = {
+    friendly: { thinkLongP: 0.16, pauseTypingP: 0.10, ignoreBriefP: 0.05 },
+    shy:      { thinkLongP: 0.24, pauseTypingP: 0.14, ignoreBriefP: 0.06 },
+    cold:     { thinkLongP: 0.10, pauseTypingP: 0.05, ignoreBriefP: 0.03 },
+    funny:    { thinkLongP: 0.18, pauseTypingP: 0.08, ignoreBriefP: 0.06 },
+    curious:  { thinkLongP: 0.20, pauseTypingP: 0.10, ignoreBriefP: 0.05 }
 };
 
 function pickPersona(gender) {
-    // خفف "flirty" للإناث حتى لا يصبح مزعجاً
+    // Keep it simple: choose one of 5 personas
     const pool = gender === 'female'
-        ? ['friendly','friendly','shy','serious','sarcastic','flirty']
-        : ['friendly','friendly','serious','sarcastic','flirty','shy'];
+        ? ['friendly', 'friendly', 'curious', 'funny', 'shy', 'cold']
+        : ['friendly', 'friendly', 'curious', 'funny', 'cold', 'shy'];
     return choice(pool);
 }
 
@@ -1868,7 +1891,9 @@ function botAwareReply(bot, userText, dialect, personaId) {
     let base = botReplyText(bot, userText, { dialect: d });
     if (ar) base = casualizeArabic(d, base);
     // لا نسأل كثير: سؤال واحد قصير فقط عند وجود كلمة مفتاحية أو سؤال من المستخدم
-    const shouldAsk = (a.isQuestion || (a.keywords && a.keywords.length)) && Math.random() < 0.22;
+    const persona = BOT_PERSONAS[personaId] || BOT_PERSONAS.friendly;
+    const askChance = Math.min(0.55, Math.max(0.10, (persona.questionRate ?? 0.55) * 0.40));
+    const shouldAsk = (a.isQuestion || (a.keywords && a.keywords.length)) && Math.random() < askChance;
     if (shouldAsk) {
         const follow = shortFollowUp(d, ar);
         const merged = clampText(`${base} ${follow}`, 90);
@@ -1889,6 +1914,9 @@ async function smartBotReply({ bot, userText, dialect, personaId, room, convStat
     const localRaw = botAwareReply(bot, userText, dialect, personaId);
     const effectiveRoom = String(bot?.room || room || '').trim();
     const shouldUseGemini = isPrivate ? true : roomSupportsGemini(effectiveRoom);
+    const persona = BOT_PERSONAS[personaId] || BOT_PERSONAS.friendly;
+    const personaMaxChars = persona.maxChars || 200;
+    const shouldAskQuestion = Math.random() < (persona.questionRate ?? 0.55);
     if (!shouldUseGemini) {
         console.log('[Gemini] smartBotReply: skip — room not Gemini-enabled', {
             effectiveRoom,
@@ -1898,7 +1926,9 @@ async function smartBotReply({ bot, userText, dialect, personaId, room, convStat
             isPrivate
         });
         const arLocal = hasArabic(userText) || hasArabic(localRaw);
-        return ensureEndsWithQuestion(dialect || bot?.dialect || 'ar', arLocal, clampTextWordBoundary(localRaw, 200));
+        const base = clampTextWordBoundary(localRaw, personaMaxChars);
+        const out = shouldAskQuestion ? ensureEndsWithQuestion(dialect || bot?.dialect || 'ar', arLocal, base) : base;
+        return out;
     }
     const tone = botToneForRoom(effectiveRoom);
     const history = buildHistoryForModel(convState);
@@ -1911,7 +1941,8 @@ async function smartBotReply({ bot, userText, dialect, personaId, room, convStat
         room: effectiveRoom,
         peerUsername,
         personaId,
-        rateKey: isPrivate ? `bot-private:${String(bot?.username || 'x').toLowerCase()}` : 'bot-chat'
+        rateKey: isPrivate ? `bot-private:${String(bot?.username || 'x').toLowerCase()}` : 'bot-chat',
+        shouldAskQuestion
     });
     if (!res.ok || !res.text) {
         console.warn('[Gemini] smartBotReply: fallback local', {
@@ -1921,12 +1952,15 @@ async function smartBotReply({ bot, userText, dialect, personaId, room, convStat
             room: effectiveRoom
         });
         const arLocal = hasArabic(userText) || hasArabic(localRaw);
-        return ensureEndsWithQuestion(dialect || bot?.dialect || 'ar', arLocal, clampTextWordBoundary(localRaw, 200));
+        const base = clampTextWordBoundary(localRaw, personaMaxChars);
+        const out = shouldAskQuestion ? ensureEndsWithQuestion(dialect || bot?.dialect || 'ar', arLocal, base) : base;
+        return out;
     }
     const ar = hasArabic(userText) || hasArabic(res.text);
     const polished = ar ? casualizeArabic(dialect || bot.dialect || 'ar', res.text) : res.text;
-    const withQ = ensureEndsWithQuestion(dialect || bot?.dialect || 'ar', ar, polished);
-    const finalText = clampTextWordBoundary(withQ, 200);
+    const base = polished;
+    const maybeWithQ = shouldAskQuestion ? ensureEndsWithQuestion(dialect || bot?.dialect || 'ar', ar, base) : base;
+    const finalText = clampTextWordBoundary(maybeWithQ, personaMaxChars);
     if (tooShortHumanReply(finalText)) {
         if (isPrivate) {
             // في الخاص: حتى الرد القصير من Gemini غالباً أذكى من fallback المحلي
@@ -1937,7 +1971,10 @@ async function smartBotReply({ bot, userText, dialect, personaId, room, convStat
             room: effectiveRoom
         });
         const arLocal = hasArabic(userText) || hasArabic(localRaw);
-        return ensureEndsWithQuestion(dialect || bot?.dialect || 'ar', arLocal, clampTextWordBoundary(localRaw, 200));
+        const localBase = clampTextWordBoundary(localRaw, personaMaxChars);
+        return shouldAskQuestion
+            ? ensureEndsWithQuestion(dialect || bot?.dialect || 'ar', arLocal, localBase)
+            : localBase;
     }
     return personaWrap(personaId, ar, finalText);
 }
@@ -2083,38 +2120,109 @@ function scheduleRandomBotReply(socket, userText) {
     st.history = Array.isArray(st.history) ? st.history : [];
     st.history.push({ from: 'user', text: userText, at: Date.now() });
     if (st.history.length > 12) st.history.splice(0, st.history.length - 12);
+
     const first = st.botMsgs === 0;
-    let delaySec;
-    if (first) {
-        // في المطابقة العشوائية: لا يتأخر كثيراً
-        delaySec = randInt(3, 8);
-    } else {
-        delaySec = randInt(1, 4);
-        if ((st.humanMsgs + st.botMsgs) % 6 === 0) delaySec += 5; // توقف قصير بعد كل ~6 رسائل
-    }
+    const personaId = st.bot.persona || 'friendly';
+    const timing = BOT_TIMING_PRESETS[personaId] || BOT_TIMING_PRESETS.friendly;
+    const userLen = String(userText || '').trim().length;
+    const clampMs = (v, min, max) => Math.max(min, Math.min(max, v));
+
+    // sometimes "almost ignores" (a bit longer before typing starts)
+    const ignoreBrief = Math.random() < (first ? timing.ignoreBriefP * 0.7 : timing.ignoreBriefP);
+    const ignoreExtraMs = ignoreBrief ? randInt(800, 2800) : 0;
+
+    // typing start timing (human-ish)
+    const startDelayMs = clampMs(
+        (first ? randInt(700, 1300) : randInt(300, 720)) +
+            userLen * 18 +
+            randInt(0, 420) +
+            ignoreExtraMs,
+        250,
+        2200
+    );
+
+    // typing "duration" before sending the message
+    const thinkLong = Math.random() < timing.thinkLongP;
+    const typingDurationMs = clampMs(
+        (first ? randInt(900, 1800) : randInt(650, 1200)) +
+            userLen * 22 +
+            randInt(0, 600) +
+            (thinkLong ? randInt(1100, 2800) : 0),
+        650,
+        5600
+    );
+
+    const totalSendAtMs = startDelayMs + typingDurationMs;
+
+    // stop typing briefly then resume (pause realism)
+    const pauseTyping = Math.random() < timing.pauseTypingP;
+    const pauseAtMs = pauseTyping
+        ? startDelayMs + randInt(Math.floor(typingDurationMs * 0.3), Math.floor(typingDurationMs * 0.65))
+        : null;
+    const pauseMs = pauseTyping ? randInt(450, 1250) : 0;
+
     const dialect = st.dialect || st.bot.dialect || 'ar';
+
+    // start typing indicator
+    setTimeout(() => {
+        try {
+            if (!socket.randomBot || !randomBotConversations.has(socket.id)) return;
+            socket.emit('randomDisplayTyping', { username: st.bot.username, isTyping: true });
+        } catch {
+            /* ignore */
+        }
+    }, startDelayMs);
+
+    // pause typing indicator (optional)
+    if (pauseTyping && pauseAtMs != null) {
+        setTimeout(() => {
+            try {
+                if (!socket.randomBot || !randomBotConversations.has(socket.id)) return;
+                socket.emit('randomDisplayTyping', { username: st.bot.username, isTyping: false });
+            } catch {
+                /* ignore */
+            }
+        }, pauseAtMs);
+
+        setTimeout(() => {
+            try {
+                if (!socket.randomBot || !randomBotConversations.has(socket.id)) return;
+                socket.emit('randomDisplayTyping', { username: st.bot.username, isTyping: true });
+            } catch {
+                /* ignore */
+            }
+        }, pauseAtMs + pauseMs);
+    }
+
+    // send the actual reply (and stop typing)
     setTimeout(async () => {
-        // ربما انتهت الجلسة أثناء الانتظار
-        if (!socket.randomBot || !randomBotConversations.has(socket.id)) return;
-        const reply = await smartBotReply({
-            bot: st.bot,
-            userText,
-            dialect,
-            personaId: st.bot.persona || 'friendly',
-            room: st.bot.room || 'General',
-            convState: st,
-            peerUsername: socket.data?.username || ''
-        });
-        st.botMsgs++;
-        st.history.push({ from: 'bot', text: reply, at: Date.now() });
-        if (st.history.length > 12) st.history.splice(0, st.history.length - 12);
-        socket.emit('randomChatMessage', {
-            from: st.bot.username,
-            text: reply,
-            time: new Date().toLocaleTimeString()
-        });
-        maybeTriggerRandomBotSkip(socket);
-    }, delaySec * 1000);
+        try {
+            if (!socket.randomBot || !randomBotConversations.has(socket.id)) return;
+            socket.emit('randomDisplayTyping', { username: st.bot.username, isTyping: false });
+
+            const reply = await smartBotReply({
+                bot: st.bot,
+                userText,
+                dialect,
+                personaId: personaId,
+                room: st.bot.room || 'General',
+                convState: st,
+                peerUsername: socket.data?.username || ''
+            });
+            st.botMsgs++;
+            st.history.push({ from: 'bot', text: reply, at: Date.now() });
+            if (st.history.length > 12) st.history.splice(0, st.history.length - 12);
+            socket.emit('randomChatMessage', {
+                from: st.bot.username,
+                text: reply,
+                time: new Date().toLocaleTimeString()
+            });
+            maybeTriggerRandomBotSkip(socket);
+        } catch {
+            /* ignore */
+        }
+    }, totalSendAtMs);
+
     maybeTriggerRandomBotSkip(socket);
 }
 
@@ -2209,7 +2317,7 @@ function botSayInRoom(bot, text, mentions = []) {
     const cleanMentions = Array.isArray(mentions)
         ? mentions.map((u) => sanitizeUsername(String(u || ''))).filter(Boolean).slice(0, 3)
         : [];
-    io.to(bot.room).emit('message', {
+    const payload = {
         username: bot.username,
         text: cleanText,
         media: null,
@@ -2220,7 +2328,9 @@ function botSayInRoom(bot, text, mentions = []) {
         isSystem: false,
         mentions: cleanMentions,
         time: new Date().toLocaleTimeString()
-    });
+    };
+    pushRoomChatMessage(bot.room, payload);
+    io.to(bot.room).emit('message', payload);
 }
 
 // ====== Room bot chatter (bot-bot + triggered) ======
@@ -2266,6 +2376,52 @@ function canBotTalkInRoom(room, limitPerMin = 18) {
     row.used += 1;
     roomBotChatterState.set(r, row);
     return true;
+}
+
+// ---- Room message buffer (simple in-memory history) ----
+// هدفه: عند دخول مستخدم جديد، يعرض له آخر محادثات موجودة بدل غرفة فاضية.
+const roomChatBuffer = new Map(); // room -> { lastAnyAt, messages: [payload...] }
+const ROOM_BUFFER_MAX = 30;
+const roomSeedCooldown = new Map(); // room -> lastSeedAtMs
+function pushRoomChatMessage(room, payload) {
+    const r = String(room || '').trim();
+    if (!r || !payload) return;
+    let st = roomChatBuffer.get(r);
+    if (!st) {
+        st = { lastAnyAt: Date.now(), messages: [] };
+        roomChatBuffer.set(r, st);
+    }
+    st.lastAnyAt = Date.now();
+    st.messages.push(payload);
+    if (st.messages.length > ROOM_BUFFER_MAX) st.messages.splice(0, st.messages.length - ROOM_BUFFER_MAX);
+}
+function getRoomRecentNonSystem(room, count = 6) {
+    const r = String(room || '').trim();
+    const st = roomChatBuffer.get(r);
+    if (!st || !Array.isArray(st.messages) || !st.messages.length) return [];
+    return st.messages.filter((m) => !m?.isSystem).slice(-count);
+}
+
+function seedRoomBotsOnJoin(room, count = 4) {
+    const cleanRoom = String(room || '').trim();
+    if (!cleanRoom) return;
+    const bots2 = pickBotsInRoom(cleanRoom, 2);
+    const bots1 = bots2.length ? bots2 : pickBotsInRoom(cleanRoom, 1);
+    const bots = bots1 || [];
+    if (!bots.length) return;
+
+    for (let i = 0; i < count; i++) {
+        const b = bots[i % bots.length];
+        const delay = 240 + i * randInt(520, 860) + randInt(0, 220);
+        setTimeout(() => {
+            // إذا الغرفة اختفت أو البوت غير موجود فيها الآن
+            if (!roomUsersList.has(cleanRoom)) return;
+            if (!b || b.room !== cleanRoom) return;
+            if (!canBotTalkInRoom(cleanRoom, 18)) return;
+            const line = buildRoomLikeLine(b, cleanRoom);
+            botSayInRoom(b, line.text, line.mentions);
+        }, delay);
+    }
 }
 
 function pickBotsInRoom(room, want = 2) {
@@ -2800,6 +2956,12 @@ function randomLeaveWait(socket) {
 function randomEndSession(socket, reason) {
     // جلسة مع بوت (بدون شريك socket)
     if (socket.randomBot) {
+        const botUsername = socket.randomBot?.username || 'Bot';
+        try {
+            socket.emit('randomDisplayTyping', { username: botUsername, isTyping: false });
+        } catch {
+            /* ignore */
+        }
         delete socket.randomPairRoom;
         delete socket.randomBot;
         delete socket.randomMeta;
@@ -2835,6 +2997,12 @@ function randomEndSession(socket, reason) {
 function randomCleanupDisconnect(socket) {
     randomLeaveWait(socket);
     if (socket.randomBot) {
+        const botUsername = socket.randomBot?.username || 'Bot';
+        try {
+            socket.emit('randomDisplayTyping', { username: botUsername, isTyping: false });
+        } catch {
+            /* ignore */
+        }
         delete socket.randomPairRoom;
         delete socket.randomBot;
         delete socket.randomMeta;
@@ -3137,6 +3305,40 @@ io.on('connection', (socket) => {
         });
         io.to(cleanRoom).emit('updateUserList', Array.from(roomUsersList.get(cleanRoom).values()));
         io.to(cleanRoom).emit('updateUserCount', roomUsersList.get(cleanRoom)?.size || 0);
+
+        // Seed / Replay: لا تجعل المستخدم يدخل غرفة فاضية
+        // 1) أعد إرسال آخر رسائل "غير نظام" له فقط (بنفس event message)
+        // 2) إذا كانت المحادثة قديمة/ضعيفة => شغّل بوتات تكتب خلال ثواني
+        try {
+            const recent = getRoomRecentNonSystem(cleanRoom, 7);
+            const st = roomChatBuffer.get(cleanRoom);
+            const lastAnyAt = st?.lastAnyAt || 0;
+            const stale = !lastAnyAt || (Date.now() - lastAnyAt > 25_000);
+
+            recent.forEach((m, idx) => {
+                const d = 120 + idx * randInt(170, 280);
+                setTimeout(() => {
+                    try {
+                        // إذا المستخدم غادر الغرفة لا نرسل له تاريخ
+                        if (!socket.rooms.has(cleanRoom)) return;
+                        socket.emit('message', m);
+                    } catch {
+                        /* ignore */
+                    }
+                }, d);
+            });
+
+            if (stale || recent.length < 3) {
+                const lastSeedAt = roomSeedCooldown.get(cleanRoom) || 0;
+                const now = Date.now();
+                if (now - lastSeedAt > 8_000) {
+                    roomSeedCooldown.set(cleanRoom, now);
+                    seedRoomBotsOnJoin(cleanRoom, 4);
+                }
+            }
+        } catch {
+            /* ignore */
+        }
     });
 
     socket.on('leaveRoom', () => {
@@ -3219,7 +3421,7 @@ io.on('connection', (socket) => {
             mentions = [];
         }
 
-        io.to(cleanRoom).emit('message', {
+        const payload = {
             username: socket.data.username,
             text:     cleanText,
             media:    (data.type === 'image' || data.type === 'audio' || data.type === 'gif') ? data.media : null,
@@ -3230,7 +3432,9 @@ io.on('connection', (socket) => {
             isSystem: false,
             mentions,
             time:     new Date().toLocaleTimeString()
-        });
+        };
+        pushRoomChatMessage(cleanRoom, payload);
+        io.to(cleanRoom).emit('message', payload);
 
         // تفاعل بوتات الغرفة مع رسائل البشر (تحية/ملل/سؤال)
         if ((data.type || 'text') === 'text') {

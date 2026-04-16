@@ -3882,9 +3882,22 @@ if (socket) {
         if (numEl) numEl.textContent = String(count);
     });
 
+    function setRandomTypingIndicator(username, isTyping) {
+        const el = document.getElementById('randomTypingIndicator');
+        if (!el) return;
+        if (!isTyping) {
+            el.textContent = '';
+            return;
+        }
+        const label = tKey('typing') || 'is typing...';
+        const u = sanitizeInput(String(username || '')).trim();
+        el.textContent = u ? `${u} ${label}` : label;
+    }
+
     socket.on('randomMatched', ({ partner }) => {
         randomLastPaidForFilter = false;
         randomLastPaidForCountry = false;
+        setRandomTypingIndicator('', false);
         const title = document.getElementById('randomPartnerTitle');
         if (title) title.textContent = sanitizeInput(String(partner || '…'));
         const area = document.getElementById('randomChatMessages');
@@ -3893,16 +3906,23 @@ if (socket) {
     });
 
     socket.on('randomSearchStarted', () => {
+        setRandomTypingIndicator('', false);
         showRandomSubView('search');
     });
 
     socket.on('randomSearchStopped', () => {
+        setRandomTypingIndicator('', false);
         showRandomSubView('lobby');
+    });
+
+    socket.on('randomDisplayTyping', ({ username, isTyping }) => {
+        setRandomTypingIndicator(username, !!isTyping);
     });
 
     socket.on('randomSessionEnded', (payload = {}) => {
         randomLastPaidForFilter = false;
         randomLastPaidForCountry = false;
+        setRandomTypingIndicator('', false);
         showRandomSubView('lobby');
         const area = document.getElementById('randomChatMessages');
         if (area) area.innerHTML = '';
