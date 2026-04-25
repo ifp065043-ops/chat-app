@@ -1333,6 +1333,26 @@ const botConversations = new Map(); // key "human|bot" -> { startedAt, humanMsgs
 const randomBotRegistry = []; // 50 شخصيات للمطابقة العشوائية
 const randomBotConversations = new Map(); // socket.id -> { bot, humanMsgs, botMsgs }
 
+// ---- Private chat read receipts (WhatsApp-like) ----
+let privateMessageIdCounter = 1;
+const privateMessageReadState = new Map(); // messageId -> { from, to, read, createdAt }
+const PRIVATE_READ_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+function newPrivateMessageId() {
+    return `pm_${privateMessageIdCounter++}`;
+}
+function cleanupPrivateReadState() {
+    // simple cap/cleanup to avoid unbounded memory growth
+    try {
+        if (privateMessageReadState.size < 5000) return;
+        const cutoff = Date.now() - PRIVATE_READ_TTL_MS;
+        for (const [id, st] of privateMessageReadState.entries()) {
+            if (!st || (st.createdAt || 0) < cutoff) privateMessageReadState.delete(id);
+        }
+    } catch {
+        /* ignore */
+    }
+}
+
 function hasArabic(text) {
     return /[\u0600-\u06FF]/.test(String(text || ''));
 }
@@ -3452,6 +3472,7 @@ io.on('connection', (socket) => {
         }
         const bot = botRegistry.get(toUsername.toLowerCase());
         if (bot) {
+            const messageId = newPrivateMessageId();
             // البوت لا يستقبل وسائط حالياً (نص فقط)
             const type = 'text';
             let cleanText = data.text ? sanitizeText(data.text) : '';
@@ -3460,6 +3481,7 @@ io.on('connection', (socket) => {
 
             // اعرض رسالة المستخدم في خيط الخاص (كما لو وصلت للبوت)
             const outgoingPayload = {
+                messageId,
                 from: fromUsername, to: bot.username, text: cleanText,
                 media: null,
                 type,
@@ -3468,7 +3490,8 @@ io.on('connection', (socket) => {
                 coverPhoto: socket.data.coverPhoto || null,
                 time: new Date().toLocaleTimeString()
             };
-            socket.emit('privateMessage', { ...outgoingPayload, outgoing: true });
+            // البوت "يقرأ" فوراً حتى يظهر ✓✓ على رسالة المستخدم
+            socket.emit('privateMessage', { ...outgoingPayload, outgoing: true, read: true });
 
             // رد البوت بتأخير واقعي
             scheduleBotPrivateReply({
@@ -3484,6 +3507,7 @@ io.on('connection', (socket) => {
         if (!target) { socket.emit('privateError', { code: 'offline', message: 'User is offline' }); return; }
         if (target.data.allowPrivateChat === false) { socket.emit('privateError', { code: 'disabled', message: 'This user disabled private chat' }); return; }
 
+        const messageId = newPrivateMessageId();
         const type =
             data.type === 'image' ? 'image' :
             data.type === 'audio' ? 'audio' :
@@ -3503,7 +3527,15 @@ io.on('connection', (socket) => {
         if (type === 'text' && (!cleanText || !cleanText.trim())) return;
         if ((type === 'image' || type === 'audio' || type === 'gif') && !data.media) return;
 
+        privateMessageReadState.set(messageId, {
+            from: fromUsername,
+            to: toUsername,
+            read: false,
+            createdAt: Date.now()
+        });
+
         const payload = {
+            messageId,
             from: fromUsername, to: toUsername, text: cleanText,
             media: (type === 'image' || type === 'audio' || type === 'gif') ? data.media : null,
             type, color: socket.data.color || '#00d2ff',
@@ -3512,7 +3544,30 @@ io.on('connection', (socket) => {
             time: new Date().toLocaleTimeString()
         };
         target.emit('privateMessage', payload);
-        socket.emit('privateMessage', { ...payload, outgoing: true });
+        socket.emit('privateMessage', { ...payload, outgoing: true, read: false });
+    });
+
+    // Receiver acknowledges the message as read
+    socket.on('privateMessageSeen', ({ messageId }) => {
+        if (!hit('privateMessageSeen', 20, 10_000)) return;
+        if (!socket.data?.username) return;
+        cleanupPrivateReadState();
+        const id = String(messageId || '').trim();
+        if (!id) return;
+        const st = privateMessageReadState.get(id);
+        if (!st) return;
+        const viewer = socket.data.username;
+        if (String(st.to || '').toLowerCase() !== viewer.toLowerCase()) return;
+        if (st.read) return;
+        st.read = true;
+
+        const senderSock = findSocketByUsername(st.from);
+        try {
+            if (senderSock) senderSock.emit('privateMessageReadUpdate', { messageId: id, read: true });
+        } catch {
+            /* ignore */
+        }
+        privateMessageReadState.delete(id);
     });
 
     socket.on('typing', ({ username, room, isTyping }) => {

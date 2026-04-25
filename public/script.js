@@ -41,6 +41,7 @@ let typingTimeout;
 let currentPrivatePeer = null;
 /** @type {Map<string, { messages: Array<{from:string,to:string,text?:string,media?:string,type:string,time:string,outgoing?:boolean}>, unread: number }>} */
 const privateThreads = new Map();
+const privateSeenAcked = new Set(); // messageId already sent to server
 /** أسماء المستخدمين → آخر صورة رمزية وغلاف معروفان (قائمة المتصلين / رسائل خاصة) */
 const peerProfileCache = new Map();
 /** @type {Array<{text:string,time:string,read:boolean}>} */
@@ -2710,6 +2711,18 @@ function appendPrivateLine(container, data, isMine) {
     time.style.cssText = 'font-size:10px;opacity:0.5;margin-left:8px;';
     time.textContent = data.time || getCurrentTime();
     div.appendChild(time);
+
+    // WhatsApp-like ticks for outgoing messages (read vs sent)
+    if (data.outgoing) {
+        const isRead = data.read === true;
+        const status = document.createElement('span');
+        status.className = 'pm-read-status';
+        status.textContent = isRead ? ' ✓✓' : ' ✓';
+        status.style.cssText = isRead
+            ? 'font-size:10px;opacity:0.95;margin-left:4px;color:#22c55e;font-weight:800;'
+            : 'font-size:10px;opacity:0.35;margin-left:4px;color:rgba(255,255,255,0.9);font-weight:800;';
+        div.appendChild(status);
+    }
     container.appendChild(div);
     container.scrollTop = container.scrollHeight;
 }
@@ -2851,6 +2864,34 @@ function startPrivateChat(username) {
     renderPrivateThreadsList();
     switchChatView('private');
     const t = ensureThread(username);
+
+    // When opening the chat, mark the latest incoming message as "read"
+    // to show ✓✓ (WhatsApp-like).
+    try {
+        const panePrivate = document.getElementById('panePrivate');
+        const paneVisible = panePrivate && panePrivate.style.display !== 'none';
+        if (paneVisible) {
+            const lastIncoming = Array.isArray(t.messages)
+                ? [...t.messages].reverse().find((m) => !m.outgoing && m.from === username && m.messageId)
+                : null;
+            if (lastIncoming?.messageId && !privateSeenAcked.has(lastIncoming.messageId)) {
+                privateSeenAcked.add(lastIncoming.messageId);
+                const delay = 720 + Math.floor(Math.random() * 320);
+                setTimeout(() => {
+                    try {
+                        if (socket && currentPrivatePeer === username) {
+                            socket.emit('privateMessageSeen', { messageId: lastIncoming.messageId });
+                        }
+                    } catch {
+                        /* ignore */
+                    }
+                }, delay);
+            }
+        }
+    } catch {
+        /* ignore */
+    }
+
     t.unread = 0;
     updateInboxBadge();
 }
@@ -3748,6 +3789,8 @@ if (socket) {
             time: data.time || getCurrentTime(),
             ts: Date.now(),
             outgoing: data.outgoing,
+            messageId: data.messageId || null,
+            read: data.read === true,
             avatar: data.avatar || null,
             coverPhoto: data.coverPhoto || null,
             color: data.color || '#00d2ff'
@@ -3773,10 +3816,42 @@ if (socket) {
             if (area) {
                 const isMine = data.outgoing || data.from === me;
                 appendPrivateLine(area, data, isMine);
+
+                // Mark as read (WhatsApp-like) when the active thread receives a new incoming message
+                if (!data.outgoing && data.messageId) {
+                    const pane = document.getElementById('panePrivate');
+                    const paneVisible = pane && pane.style.display !== 'none';
+                    if (paneVisible && currentPrivatePeer === peer && !privateSeenAcked.has(data.messageId)) {
+                        privateSeenAcked.add(data.messageId);
+                        const delay = 520 + Math.floor(Math.random() * 350);
+                        setTimeout(() => {
+                            try {
+                                if (socket && currentPrivatePeer === peer) socket.emit('privateMessageSeen', { messageId: data.messageId });
+                            } catch {
+                                /* ignore */
+                            }
+                        }, delay);
+                    }
+                }
             }
         }
         if (!data.outgoing && data.from !== me) {
             alertSound.play().catch(() => {});
+        }
+    });
+
+    socket.on('privateMessageReadUpdate', ({ messageId, read }) => {
+        const id = messageId || null;
+        if (!id) return;
+        for (const [peer, th] of privateThreads.entries()) {
+            const idx = Array.isArray(th.messages)
+                ? th.messages.findIndex((m) => m && m.messageId === id)
+                : -1;
+            if (idx >= 0) {
+                th.messages[idx].read = read === true;
+                if (currentPrivatePeer === peer) renderPrivateThread(peer);
+                break;
+            }
         }
     });
 
