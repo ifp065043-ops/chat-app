@@ -431,7 +431,7 @@ app.use(helmet({
         directives: {
             defaultSrc: ["'self'"],
             // لا نستخدم inline scripts في الواجهة، فإزالة 'unsafe-inline' تقلل مخاطر XSS
-            scriptSrc:  ["'self'", "https://cdn.jsdelivr.net"],
+            scriptSrc: ["'self'", "https://cdn.jsdelivr.net", "http://localhost:8080", "http://127.0.0.1:8080"],
             // تم نقل inline styles إلى ملفات CSS لتشديد CSP
             styleSrc:   ["'self'"],
             // نسمح بتغيير style attributes ديناميكياً عبر JS (مثل فتح/إغلاق المودالات وتموضع القوائم)
