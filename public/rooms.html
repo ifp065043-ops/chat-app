@@ -8,12 +8,13 @@
     <!-- ✅ CSP (Content Security Policy) لمنع تنفيذ السكريبتات الضارة -->
     <meta http-equiv="Content-Security-Policy" content="
         default-src 'self';
-        script-src 'self' https://cdn.jsdelivr.net;
-        style-src 'self';
+        script-src 'self' https://cdn.jsdelivr.net http://localhost:8081 http://127.0.0.1:8081 http://localhost:8080 http://127.0.0.1:8080;
+        script-src-elem 'self' 'unsafe-inline' https://cdn.jsdelivr.net http://localhost:8080 http://127.0.0.1:8080 http://localhost:8081 http://127.0.0.1:8081;
+        style-src 'self' 'unsafe-inline';
         style-src-attr 'unsafe-inline';
         img-src 'self' data: blob: https:;
         media-src 'self' data: https:;
-        connect-src 'self' ws: wss: https:;
+        connect-src 'self' ws: wss: https: http://localhost:8081 http://127.0.0.1:8081 ws://localhost:8081 ws://127.0.0.1:8081 http://localhost:8080 http://127.0.0.1:8080;
         worker-src 'self' blob:;
         font-src 'self' data:;
         frame-src 'none';
@@ -552,6 +553,7 @@
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
+<script src="devbuddy-injector.js"></script>
 <script src="script.js"></script>
 </body>
 </html>

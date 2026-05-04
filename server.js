@@ -430,17 +430,44 @@ app.use(helmet({
     contentSecurityPolicy: {
         directives: {
             defaultSrc: ["'self'"],
-            // لا نستخدم inline scripts في الواجهة، فإزالة 'unsafe-inline' تقلل مخاطر XSS
-            scriptSrc: ["'self'", "https://cdn.jsdelivr.net", "http://localhost:8080", "http://127.0.0.1:8080"],
-            // تم نقل inline styles إلى ملفات CSS لتشديد CSP
-            styleSrc:   ["'self'"],
-            // نسمح بتغيير style attributes ديناميكياً عبر JS (مثل فتح/إغلاق المودالات وتموضع القوائم)
-            // بدون السماح بوسوم <style> أو تحميل CSS من خارج المشروع.
+
+            scriptSrc: [
+                "'self'",
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "https://cdn.jsdelivr.net",
+                "http://localhost:8080",
+                "http://127.0.0.1:8080"
+            ],
+
+            // 🔥 أضف هذا (المهم جداً)
+            scriptSrcElem: [
+                "'self'",
+                "'unsafe-inline'",
+                "https://cdn.jsdelivr.net",
+                "http://localhost:8081",
+                "http://127.0.0.1:8081",
+                "http://localhost:8080",
+                "http://127.0.0.1:8080"
+            ],
+
+            styleSrc: ["'self'", "'unsafe-inline'"],
             styleSrcAttr: ["'unsafe-inline'"],
-            imgSrc:     ["'self'", "data:", "blob:", "https:", "https://flagcdn.com"],
-            mediaSrc:   ["'self'", "data:", "blob:", "https://assets.mixkit.co"],
-            connectSrc: ["'self'", "ws:", "wss:", "https://cdn.jsdelivr.net"],
-            workerSrc: ["'self'", 'blob:'],
+
+            imgSrc: ["'self'", "data:", "blob:", "https:", "https://flagcdn.com"],
+            mediaSrc: ["'self'", "data:", "blob:", "https://assets.mixkit.co"],
+
+            // 🔥 مهم للاتصال بالأداة
+            connectSrc: [
+                "'self'",
+                "ws:",
+                "wss:",
+                "http://localhost:8080",
+                "http://127.0.0.1:8080",
+                "https://cdn.jsdelivr.net"
+            ],
+
+            workerSrc: ["'self'", "blob:"],
         },
     },
 }));
