@@ -45,7 +45,7 @@
         </button>
     </div>
     <div class="right">
-        <button type="button" class="user-avatar-mini" id="userAvatarBtn" title="Profile"><img id="userAvatarMini" alt="" /><span id="userAvatarMiniPh">👤</span></button>
+        <button type="button" class="user-avatar-mini" id="userAvatarBtn" title="Profile"><img id="userAvatarMini" alt="" loading="lazy" /><span id="userAvatarMiniPh">👤</span></button>
         <div class="messages-popover-anchor" id="messagesPopoverAnchor">
             <button type="button" class="ctrl-btn icon-btn" id="messagesBtn" title="Messages" aria-expanded="false" aria-haspopup="true" aria-controls="messagesPopover">💌 <span class="badge pulse-badge is-hidden"></span></button>
             <div id="messagesPopover" class="messages-popover is-hidden" role="dialog" aria-labelledby="t-inboxTitle" aria-modal="false">
@@ -183,12 +183,12 @@
                 <div class="pm-chat">
                     <div class="pm-chat-header-stack">
                         <div class="pm-peer-cover-row" aria-hidden="true">
-                            <img id="privatePeerCoverImg" class="pm-peer-cover-img is-hidden" alt="" />
+                            <img id="privatePeerCoverImg" class="pm-peer-cover-img is-hidden" alt="" loading="lazy" />
                             <div id="privatePeerCoverFallback" class="pm-peer-cover-fallback"></div>
                         </div>
                         <div class="pm-chat-topbar">
                             <span id="privatePeerAvatarBadge" class="pm-peer-badge" aria-hidden="true">
-                                <img id="privatePeerBadgeAvatar" class="pm-peer-badge-img is-hidden" alt="" />
+                                <img id="privatePeerBadgeAvatar" class="pm-peer-badge-img is-hidden" alt="" loading="lazy" />
                                 <span id="privatePeerBadgeLetter" class="pm-peer-badge-letter">…</span>
                             </span>
                             <div class="pm-chat-topbar-info">
@@ -234,7 +234,7 @@
                 </div>
                 <div id="randomRegionPicker" class="random-region-picker" aria-label="Region">
                     <button type="button" id="randomRegionPickerBtn" class="random-region-picker__btn" aria-haspopup="listbox" aria-expanded="false">
-                        <img id="randomRegionFlag" class="random-region-picker__flag" src="" alt="" />
+                        <img id="randomRegionFlag" class="random-region-picker__flag" src="" alt="" loading="lazy" />
                         <span id="randomRegionLabel">🌐 All</span>
                     </button>
                     <div id="randomRegionMenu" class="random-region-picker__menu is-hidden" role="listbox" aria-label="Countries"></div>
@@ -352,7 +352,7 @@
             <div class="profile-cover-stack">
                 <div class="profile-cover-wrap">
                     <div class="profile-cover-media">
-                        <img id="coverPreview" class="profile-cover-img is-hidden" alt="" />
+                        <img id="coverPreview" class="profile-cover-img is-hidden" alt="" loading="lazy" />
                         <div id="coverPlaceholder" class="profile-cover-placeholder" aria-hidden="true"></div>
                     </div>
                     <input type="file" id="coverInput" accept="image/jpeg,image/png,image/webp" class="is-hidden">
@@ -361,7 +361,7 @@
                 </div>
                 <div class="profile-avatar-floating">
                     <div class="avatar-circle-wrap avatar-circle-wrap--hero" id="avatarCircleWrap">
-                        <img id="avatarPreview" class="avatar-preview-img" alt="" />
+                        <img id="avatarPreview" class="avatar-preview-img" alt="" loading="lazy" />
                         <span id="avatarPlaceholder" class="avatar-placeholder">👤</span>
                     </div>
                     <input type="file" id="avatarInput" accept="image/jpeg,image/png,image/webp,image/gif" class="is-hidden">
@@ -548,7 +548,7 @@
     <button type="button" class="media-lightbox-backdrop" id="mediaLightboxBackdrop" aria-label="Close"></button>
     <button type="button" class="media-lightbox-close" id="mediaLightboxClose" aria-label="Close">&times;</button>
     <div class="media-lightbox-frame">
-        <img id="mediaLightboxImg" class="media-lightbox-img" alt="" />
+        <img id="mediaLightboxImg" class="media-lightbox-img" alt="" loading="lazy" />
     </div>
 </div>
 

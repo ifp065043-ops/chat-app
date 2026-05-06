@@ -1192,6 +1192,7 @@ function populateRandomRegionSelect(lang) {
         row.setAttribute('data-code', code);
         const img = document.createElement('img');
         img.className = 'random-region-picker__flag';
+        img.loading = 'lazy';
         if (code === 'all') {
             img.src = '';
             img.alt = '';
@@ -2650,6 +2651,7 @@ function appendPrivateLine(container, data, isMine) {
     head.className = 'msg-head';
     const avatar = document.createElement('img');
     avatar.className = 'msg-avatar';
+    avatar.loading = 'lazy';
     const avatarSrc = data.avatar || (isMine ? getAvatarUrl() : '');
     if (avatarSrc) avatar.src = avatarSrc;
     else avatar.style.display = 'none';
@@ -2686,6 +2688,7 @@ function appendPrivateLine(container, data, isMine) {
         img.src = data.media;
         img.className = 'chat-img chat-media-thumb';
         img.alt = '';
+        img.loading = 'lazy';
         bindChatMediaOpen(img);
         div.appendChild(img);
     } else if (data.type === 'gif' && data.media) {
@@ -2693,6 +2696,7 @@ function appendPrivateLine(container, data, isMine) {
         img.src = data.media;
         img.className = 'chat-img chat-gif chat-media-thumb';
         img.alt = '';
+        img.loading = 'lazy';
         bindChatMediaOpen(img);
         div.appendChild(img);
     } else if (data.type === 'audio' && data.media) {
@@ -2772,6 +2776,7 @@ function renderPrivateThreadsList() {
 
         const av = document.createElement('img');
         av.className = 'pm-thread-avatar-img';
+        av.loading = 'lazy';
         const lastAvatar = last?.avatar || '';
         if (lastAvatar) av.src = lastAvatar;
         else av.classList.add('is-hidden');
@@ -2930,6 +2935,7 @@ function renderInboxList() {
         const avImg = document.createElement('img');
         avImg.className = 'inbox-avatar-img';
         avImg.alt = '';
+        avImg.loading = 'lazy';
         const lastAvatar = last?.avatar || '';
         if (lastAvatar) avImg.src = lastAvatar;
         else avImg.classList.add('is-hidden');
@@ -3686,6 +3692,7 @@ if (socket) {
             head.className = 'msg-head';
             const avatar = document.createElement('img');
             avatar.className = 'msg-avatar';
+            avatar.loading = 'lazy';
             const own = data.username === currentNick;
             const avatarSrc = data.avatar || (own ? getAvatarUrl() : '');
             if (avatarSrc) {
@@ -3745,6 +3752,7 @@ if (socket) {
                 img.src = data.media;
                 img.className = 'chat-img chat-media-thumb';
                 img.alt = 'Image';
+                img.loading = 'lazy';
                 bindChatMediaOpen(img);
                 div.appendChild(img);
             } else if (data.type === 'gif') {
@@ -3752,6 +3760,7 @@ if (socket) {
                 img.src = data.media;
                 img.className = 'chat-img chat-gif chat-media-thumb';
                 img.alt = 'GIF';
+                img.loading = 'lazy';
                 bindChatMediaOpen(img);
                 div.appendChild(img);
             } else if (data.type === 'audio') {
@@ -3881,6 +3890,7 @@ if (socket) {
             avWrap.className = 'sidebar-user-avatar-wrap';
             const av = document.createElement('img');
             av.className = 'sidebar-user-avatar-img';
+            av.loading = 'lazy';
             if (user.avatar) av.src = user.avatar;
             else av.classList.add('is-hidden');
             const avPh = document.createElement('span');
